@@ -8,5 +8,6 @@ for (const name of ['index.html', 'style.css', 'app.js', 'api-client.js', 'nav.j
   await cp(path.join(root, name), path.join(destination, name), { recursive: true });
 }
 await copyFile(path.join(root, 'data/modello-listino.csv'), path.join(destination, 'modello-listino.csv'));
+await copyFile(path.join(root, 'data/listino-esempio-excel.csv'), path.join(destination, 'listino-esempio-excel.csv'));
 console.log('Sito statico pronto in dist/');
 

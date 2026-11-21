@@ -3,7 +3,7 @@ import { fields } from './model.mjs';
 export const ENGINE_VERSION = 'xls-1.1.0';
 
 export const questions = fields.map(({ scores, fallback, partial, aliases, ...question }) => {
-  if (question.type === 'select') question.options = Object.keys(scores);
+  if (question.type === 'select') question.options = question.options ?? Object.keys(scores || {});
   return question;
 });
 
@@ -41,8 +41,10 @@ function answerFor(field, raw) {
   if (text.length > 180 || /[\u0000-\u001f]/.test(text)) throw new RangeError('Verifica il testo di ' + field.label + '.');
   if (field.type === 'select') {
     const option = scoreKey(field, text);
-    if (!option) throw new RangeError('Scegli una delle opzioni per ' + field.label + '.');
-    return option;
+    if (option) return option;
+    const listed = (field.options || []).find(key => normalized(key) === normalized(text));
+    if (listed && field.partial) return listed;
+    throw new RangeError('Scegli una delle opzioni per ' + field.label + '.');
   }
   return text;
 }

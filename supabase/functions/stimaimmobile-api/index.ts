@@ -1,6 +1,7 @@
 import postgres from "npm:postgres@3.4.7";
 import { calculate, normalizeInputs, questions, ENGINE_VERSION } from "../../../engine/valuation.mjs";
 import { makePdf } from "../../../engine/pdf.mjs";
+import { canonicalZone } from "../../../engine/zones.mjs";
 import { previewCatalog } from "./catalog.mjs";
 import { addressCandidates } from "./geocoding.mjs";
 
@@ -83,7 +84,7 @@ async function handle(req: Request): Promise<Response> {
   if (req.method === "OPTIONS") return new Response(null, { status: 204, headers: cors });
   const pathname = new URL(req.url).pathname.split("/stimaimmobile-api").at(-1) || "/";
   const route = req.method + " " + pathname;
-  if (route === "GET /questions") return json({ questions });
+  if (route === "GET /questions") return json({ questions, engineVersion: ENGINE_VERSION });
   if (route === "POST /address") {
     const data = await readBody(req, 2048);
     const address = field(data.address, "indirizzo", 220);
@@ -104,18 +105,22 @@ async function handle(req: Request): Promise<Response> {
   }
   if (route === "GET /zones") {
     const zones = await scope(tx => tx`select comune,zona,destinazione from stimaimmobile.rates order by comune,zona,destinazione`);
-    return json({ zones });
+    return json({ zones, engineVersion: ENGINE_VERSION });
   }
   if (route === "POST /estimate") {
     const data = await readBody(req), area = region(data);
+    area.zona = canonicalZone(area.zona);
     if (!data.inputs || typeof data.inputs !== "object" || Array.isArray(data.inputs))
       throw new HttpError(422, "Compila le caratteristiche dell’immobile.");
     const token = toHex(crypto.getRandomValues(new Uint8Array(32)));
     const tokenDigest = await digest(token);
     const result = await scope(async tx => {
-      const [rate] = await tx`select euro_mq,fonte,data_riferimento::text from stimaimmobile.rates
-        where comune=${area.comune} and zona=${area.zona} and destinazione=${area.destinazione}`;
+      const [rate] = await tx`select comune,zona,destinazione,euro_mq,fonte,data_riferimento::text from stimaimmobile.rates
+        where lower(trim(comune)) = lower(trim(${area.comune}))
+          and lower(trim(zona)) = lower(trim(${area.zona}))
+          and lower(trim(destinazione)) = lower(trim(${area.destinazione}))`;
       if (!rate) throw new HttpError(404, "Quotazione indisponibile per questa zona e destinazione.");
+      area.comune = rate.comune; area.zona = rate.zona; area.destinazione = rate.destinazione;
       let inputs, result;
       try {
         inputs = normalizeInputs(data.inputs);
@@ -126,7 +131,7 @@ async function handle(req: Request): Promise<Response> {
       await tx`insert into stimaimmobile.estimates(token_digest,snapshot) values(${tokenDigest},${tx.json(snapshot)})`;
       return { ...result, fonte:snapshot.fonte, data_riferimento:snapshot.data_riferimento, createdAt:snapshot.createdAt };
     });
-    return json({ ...result, pdfUrl:`${url}/functions/v1/stimaimmobile-api/pdf/${token}` }, 201);
+    return json({ ...result, engineVersion: ENGINE_VERSION, pdfUrl:`${url}/functions/v1/stimaimmobile-api/pdf/${token}` }, 201);
   }
   if (req.method === "GET" && pathname.startsWith("/pdf/")) {
     const token = pathname.slice(5);

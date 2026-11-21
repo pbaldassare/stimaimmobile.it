@@ -1,4 +1,19 @@
-// Input order follows the CALCOLI worksheet. Select options derive from the score maps.
+// Input order follows the CALCOLI worksheet. Select options derive from the score maps,
+// plus PHP piano/anno labels that stay partial until those coefficient tables exist.
+const phpFloors = ['interrato', 'terra', ...Array.from({ length: 50 }, (_, i) => String(i + 1))];
+const phpYears = [
+  'Di nuova costruzione',
+  'Dopo il 2008',
+  'Tra il 2008 e il 2001',
+  'Tra il 2000 e 1991',
+  'Tra il 1990 e 1981',
+  'Tra il 1980 e 1971',
+  'Tra il 1970 e 1961',
+  'Tra il 1960 e 1951',
+  'Tra il 1950 e 1920',
+  'Prima del 1920'
+];
+
 export const fields = [
   {
     "id": "purpose",
@@ -64,7 +79,8 @@ export const fields = [
     "id": "floor",
     "label": "Piano dell'unità",
     "group": "Edificio",
-    "type": "text",
+    "type": "select",
+    "options": ["rialzato", ...phpFloors],
     "scores": {
       "rialzato": 3
     },
@@ -137,10 +153,8 @@ export const fields = [
     "id": "year",
     "label": "Anno di costruzione",
     "group": "Edificio",
-    "type": "number",
-    "min": 1,
-    "step": 1,
-    "max": 9999,
+    "type": "select",
+    "options": ["1900", ...phpYears],
     "scores": {
       "1900": 0
     },

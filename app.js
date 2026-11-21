@@ -15,10 +15,14 @@ titles.indirizzo = 'Cerca per indirizzo';
 titles.comune = 'Inserisci il comune';
 let cancelSearch;
 
+const EXAMPLE_PLACE = {comune:'Brescia', zona:'Centro storico', destinazione:'Direzionale'};
+const EXAMPLE_ANSWERS = {surface:'65', floor:'rialzato', year:'1900'};
 const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const icon = name => '<svg class="ico" aria-hidden="true"><use href="#'+name+'"/></svg>';
 const normalized = text => String(text || '').trim().toLocaleLowerCase('it');
+const zoneKey = text => normalized(text) === 'cenro storico' ? 'centro storico' : normalized(text);
 const same = (a,b) => normalized(a) === normalized(b);
+const sameZone = (a,b) => zoneKey(a) === zoneKey(b);
 const distinct = values => [...new Set(values.filter(Boolean))].sort((a,b)=>a.localeCompare(b,'it'));
 const route = () => (location.hash.slice(1) || 'home');
 const caption = text => '<p class="eyebrow"><span class="rule"></span>'+esc(text)+'</p>';
@@ -49,6 +53,14 @@ function go(name) {
 function focusPage(){document.querySelector('#main').focus({preventScroll:true});window.scrollTo(0,0)}
 function resetEstimate(city=''){
   place={comune:city,zona:'',destinazione:''}; answers={}; wizard=false; step=0; result=null; checking=false;
+}
+function startExcelExample(){
+  resetEstimate(EXAMPLE_PLACE.comune);
+  place.zona=EXAMPLE_PLACE.zona;
+  place.destinazione=EXAMPLE_PLACE.destinazione;
+  answers={...EXAMPLE_ANSWERS};
+  checking=true;
+  go('valutazione');
 }
 function syncCity(value){
   const canonical=zones.find(item=>same(item.comune,value))?.comune || value.trim();
@@ -150,7 +162,7 @@ function mountAddressSearch(container){
             if (current !== revision) return;
             const local = rates.filter(row => same(row.comune, candidate.comune));
             resetEstimate(local[0]?.comune || candidate.comune);
-            const matches = distinct(local.map(row => row.zona).filter(zone => candidate.districts.some(d => same(d, zone))));
+            const matches = distinct(local.map(row => row.zona).filter(zone => candidate.districts.some(d => sameZone(d, zone))));
             if (matches.length === 1) place.zona = matches[0];
             checking = true;
             go('valutazione');
@@ -170,14 +182,15 @@ function locationPage(){
   const matches=zones.filter(z=>same(z.comune,place.comune));
   const known=matches.length>0;
   const unavailable=checking && place.comune && !known;
-  page.innerHTML=caption('Valutazione immobiliare')+'<h1>Dove si trova l’immobile?</h1><p class="page-description">Individua la quotazione per comune, zona e destinazione d’uso.</p>';
-  page.insertAdjacentHTML('beforeend','<a class="text-link" href="#indirizzo">Trova comune e zona dall’indirizzo</a>');
+  page.innerHTML=caption('Valutazione immobiliare')+'<h1>Dove si trova l’immobile?</h1><p class="page-description">Individua la quotazione per comune, zona e destinazione d’uso. Esempio già in listino: Brescia · Centro storico · Direzionale (65 m²).</p>';
+  page.insertAdjacentHTML('beforeend','<p><a class="text-link" href="#indirizzo">Trova comune e zona dall’indirizzo</a> · <button type="button" class="text-link" id="use-brescia">Usa l’esempio Brescia</button></p>');
+  document.querySelector('#use-brescia')?.addEventListener('click', startExcelExample);
   if(unavailable || !zones.length){
     page.insertAdjacentHTML('beforeend','<p class="notice">'+(!zones.length?'Il primo listino è in preparazione.':'Per '+esc(place.comune)+' il listino non contiene ancora una quotazione.')+' Puoi richiedere una valutazione manuale.</p>'+contactForm(true)+(zones.length?'<button id="another" class="btn secondary">Cerca un altro comune</button>':''));
     bindContact();document.querySelector('#another')?.addEventListener('click',()=>{resetEstimate();locationPage()});return;
   }
   const districtNames=distinct(matches.map(z=>z.zona));
-  const uses=distinct(matches.filter(z=>same(z.zona,place.zona)).map(z=>z.destinazione));
+  const uses=distinct(matches.filter(z=>sameZone(z.zona,place.zona)).map(z=>z.destinazione));
   page.insertAdjacentHTML('beforeend','<form id="locate" class="panel"><div class="form-grid">'+
     field('w-city','Comune','<input id="w-city" class="input" list="cities" autocomplete="address-level2" required maxlength="120" value="'+esc(place.comune)+'" placeholder="Inserisci il comune">',true)+
     (known?field('w-zone','Zona','<select id="w-zone" required>'+options(districtNames,place.zona,'Seleziona la zona')+'</select>')+field('w-use','Destinazione d’uso','<select id="w-use" required '+(!place.zona?'disabled':'')+'>'+options(uses,place.destinazione)+'</select>'):'')+'</div>'+errorBox()+'<div class="form-actions"><button class="btn">'+(known?'Descrivi l’immobile':'Verifica copertura')+'</button></div></form>'+(known?'<button id="manual" class="btn secondary">La mia zona o tipologia manca</button>':''));
@@ -194,7 +207,7 @@ function locationPage(){
   document.querySelector('#manual')?.addEventListener('click',()=>{page.innerHTML=caption('Valutazione immobiliare')+'<h1>Valutazione manuale</h1>'+contactForm(true);bindContact();focusPage()});
   document.querySelector('#locate').addEventListener('submit',async e=>{
     e.preventDefault();syncCity(city.value);checking=true;
-    if(!known || !matches.some(z=>same(z.comune,place.comune)&&same(z.zona,place.zona)&&same(z.destinazione,place.destinazione))){locationPage();return}
+    if(!known || !matches.some(z=>same(z.comune,place.comune)&&sameZone(z.zona,place.zona)&&same(z.destinazione,place.destinazione))){locationPage();return}
     const id=renderId,submit=e.currentTarget.querySelector('button');submit.disabled=true;
     try{
       if(!questions.length){const data=await request('/api/questions');if(!data.questions?.length)throw Error('Il questionario non è disponibile.');questions=data.questions}
@@ -251,7 +264,16 @@ async function render(){
   updateMenu(false);document.title=titles[current]+' · StimaImmobile.it';
   navigation.querySelectorAll('a').forEach(a=>{if(a.hash==='#'+current)a.setAttribute('aria-current','page');else a.removeAttribute('aria-current')});
   home.hidden=current!=='home';page.hidden=current==='home';focusPage();
-  if(current==='home'){mountAddressSearch(document.querySelector('#home-search'));loadZones().catch(()=>{});return}
+  if(current==='home'){
+    mountAddressSearch(document.querySelector('#home-search'));
+    const example=document.querySelector('#home-example');
+    if(example){
+      example.innerHTML='<p>Zona già coperta dal listino: <strong>Brescia · Centro storico · Direzionale</strong>, 65 m² (esempio Excel). Piano rialzato e anno 1900 sono i valori con coefficiente nel modello.</p><button type="button" class="btn secondary" id="try-brescia">Inizia con l’esempio di Brescia</button>';
+      example.querySelector('#try-brescia').addEventListener('click', startExcelExample);
+    }
+    loadZones().catch(()=>{});
+    return
+  }
   if(current==='metodo'){methodPage();return}
   if(current==='indirizzo'||(current==='valutazione'&&!place.comune&&!wizard)){addressPage();return}
   if(current==='contatti'){page.innerHTML=caption('Contatti')+'<h1>Come possiamo aiutarti?</h1>'+contactForm();bindContact();return}
