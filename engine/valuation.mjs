@@ -1,14 +1,24 @@
 import { fields } from './model.mjs';
 
-export const ENGINE_VERSION = 'xls-1.0.0';
+export const ENGINE_VERSION = 'xls-1.1.0';
 
-export const questions = fields.map(({ scores, fallback, partial, ...question }) => {
+export const questions = fields.map(({ scores, fallback, partial, aliases, ...question }) => {
   if (question.type === 'select') question.options = Object.keys(scores);
   return question;
 });
 
 function normalized(value) {
   return String(value).trim().normalize('NFC').toLocaleLowerCase('it').replace(/^si$/, 'sì');
+}
+
+function scoreKey(field, text) {
+  if (text === undefined || text === null) return undefined;
+  const needle = normalized(text);
+  const direct = Object.keys(field.scores || {}).find(key => normalized(key) === needle);
+  if (direct) return direct;
+  const aliases = field.aliases || {};
+  const alias = Object.keys(aliases).find(key => normalized(key) === needle);
+  return alias ? aliases[alias] : undefined;
 }
 
 function answerFor(field, raw) {
@@ -30,7 +40,7 @@ function answerFor(field, raw) {
   const text = String(raw).trim().normalize('NFC');
   if (text.length > 180 || /[\u0000-\u001f]/.test(text)) throw new RangeError('Verifica il testo di ' + field.label + '.');
   if (field.type === 'select') {
-    const option = Object.keys(field.scores).find(key => normalized(key) === normalized(text));
+    const option = scoreKey(field, text);
     if (!option) throw new RangeError('Scegli una delle opzioni per ' + field.label + '.');
     return option;
   }
@@ -64,8 +74,8 @@ function euroAmounts(surface, rate, correctionTenths) {
   return { value: money(numerator, denominator), minimum: money(numerator * 9n, denominator * 10n) };
 }
 
-// Excel's SUM excludes text entries, including the text numerals in E58 and E74.
-// The map stores their effective numeric contribution (zero). Blank B50/B51 each score -1.
+// Intended CALCOLI coefficients, not Excel SUM-as-text: E58 nessuno +1, E74 intenso −1.9,
+// E61 porta "va bene così" +1. Blank B50/B51 each score -1.
 export function calculate(raw, rate) {
   if (typeof rate !== 'number' || !Number.isFinite(rate) || rate <= 0) throw new RangeError('Quotazione non valida.');
   const inputs = normalizeInputs(raw);
@@ -75,7 +85,7 @@ export function calculate(raw, rate) {
   for (const field of fields) {
     if (!field.scores) continue;
     const answer = inputs[field.id];
-    const key = answer === undefined ? undefined : Object.keys(field.scores).find(key => normalized(key) === normalized(answer));
+    const key = scoreKey(field, answer);
     if (field.partial && answer !== undefined && key === undefined) {
       warnings.push(field.label + ': il coefficiente per il valore dichiarato non è disponibile nel modello originale. Il risultato esclude questo correttivo.');
     }

@@ -561,6 +561,10 @@ export const fields = [
       "normale": 0,
       "coperta": -0.8,
       "su area degradata": -1.8
+    },
+    // Excel CALCOLI E54 used the misspelled key eccezzionale; same +2 as Eccezionale.
+    "aliases": {
+      "eccezzionale": "Eccezionale"
     }
   },
   {
@@ -603,7 +607,8 @@ export const fields = [
     "scores": {
       "tutti": -3,
       "solo in parte": -1.5,
-      "nessuno": 0
+      // CALCOLI E58 stored text "1"; Excel SUM ignored it (0). Intended score is +1.
+      "nessuno": 1
     }
   },
   {
@@ -639,7 +644,8 @@ export const fields = [
     "scores": {
       "da sostituire": -0.6,
       "da revisionare": -0.2,
-      "va bene così": 6
+      // CALCOLI E61 stored +6 (typo vs peer "va bene così" rows at +1). Intended score is +1.
+      "va bene così": 1
     }
   },
   {
@@ -781,7 +787,8 @@ export const fields = [
     "scores": {
       "inquinamento acustico scarso": 1,
       "inquinamento acustico medio": 0.1,
-      "inquinamento acustico intenso": 0
+      // CALCOLI E74 stored text "-1,9"; Excel SUM ignored it (0). Intended score is -1.9.
+      "inquinamento acustico intenso": -1.9
     }
   },
   {
