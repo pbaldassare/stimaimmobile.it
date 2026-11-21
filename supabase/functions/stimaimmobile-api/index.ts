@@ -2,6 +2,7 @@ import postgres from "npm:postgres@3.4.7";
 import { calculate, normalizeInputs, questions, ENGINE_VERSION } from "../../../engine/valuation.mjs";
 import { makePdf } from "../../../engine/pdf.mjs";
 import { canonicalZone } from "../../../engine/zones.mjs";
+import { OMI_FONTE, OMI_LICENSE } from "../../../engine/omi.mjs";
 import { previewCatalog } from "./catalog.mjs";
 import { addressCandidates } from "./geocoding.mjs";
 import { isEmail, requestKind, sendThankYou, MAIL_FROM, STATUSES } from "./mail.mjs";
@@ -62,9 +63,12 @@ function field(value: unknown, label: string, max = 150, required = true): strin
 }
 function region(data: Record<string,unknown>, required = true) {
   return {
-    comune: field(data.comune, "comune", 150, required), zona: field(data.zona, "zona", 150, required),
+    comune: field(data.comune, "comune", 150, required), zona: field(data.zona, "zona", 300, required),
     destinazione: field(data.destinazione, "destinazione", 150, required),
   };
+}
+function likeNeedle(value: string) {
+  return value.toLocaleLowerCase("it").replace(/[%_\\]/g, "\\$&");
 }
 function toHex(bytes: ArrayBuffer | Uint8Array) {
   return Array.from(new Uint8Array(bytes), byte => byte.toString(16).padStart(2, "0")).join("");
@@ -101,7 +105,8 @@ async function notifyThankYou(name: string, email: string) {
 }
 async function handle(req: Request): Promise<Response> {
   if (req.method === "OPTIONS") return new Response(null, { status: 204, headers: cors });
-  const pathname = new URL(req.url).pathname.split("/stimaimmobile-api").at(-1) || "/";
+  const requestUrl = new URL(req.url);
+  const pathname = requestUrl.pathname.split("/stimaimmobile-api").at(-1) || "/";
   const route = req.method + " " + pathname;
   if (route === "GET /questions") return json({ questions, engineVersion: ENGINE_VERSION });
   if (route === "POST /address") {
@@ -123,8 +128,50 @@ async function handle(req: Request): Promise<Response> {
     return json({ addresses:addressCandidates(geo.results) });
   }
   if (route === "GET /zones") {
-    const zones = await scope(tx => tx`select comune,zona,destinazione from stimaimmobile.rates order by comune,zona,destinazione`);
-    return json({ zones, engineVersion: ENGINE_VERSION });
+    const comune = field(requestUrl.searchParams.get("comune") || "", "comune", 150, false);
+    const query = field(requestUrl.searchParams.get("q") || "", "ricerca", 80, false);
+    const payload = await scope(async tx => {
+      const [coverage] = await tx`
+        select count(*)::int as quotes,
+          count(*) filter (where fonte = ${OMI_FONTE})::int as omi,
+          count(distinct lower(trim(comune)))::int as comuni,
+          max(data_riferimento) filter (where fonte = ${OMI_FONTE})::text as omi_date
+        from stimaimmobile.rates`;
+      const listino = {
+        quotes: coverage?.quotes ?? 0,
+        comuni: coverage?.comuni ?? 0,
+        omi: coverage?.omi ?? 0,
+        omiDate: coverage?.omi_date || null,
+        fonte: OMI_FONTE,
+        license: OMI_LICENSE,
+        engineVersion: ENGINE_VERSION,
+      };
+      if (comune) {
+        const zones = await tx`
+          select comune,zona,destinazione,fonte,data_riferimento::text
+          from stimaimmobile.rates
+          where lower(trim(comune)) = lower(trim(${comune}))
+          order by zona,destinazione`;
+        return { zones, comuni: [], listino, engineVersion: ENGINE_VERSION };
+      }
+      if (query) {
+        if (query.length < 2) throw new HttpError(422, "Inserisci almeno due caratteri per la ricerca.");
+        const needle = likeNeedle(query);
+        const zones = await tx`
+          select comune,zona,destinazione,fonte
+          from stimaimmobile.rates
+          where lower(comune || ' ' || zona || ' ' || destinazione) like ${'%' + needle + '%'} escape ${'\\'}
+          order by comune,zona,destinazione
+          limit 250`;
+        return { zones, comuni: [], listino, engineVersion: ENGINE_VERSION };
+      }
+      const comuni = await tx`
+        select distinct on (lower(trim(comune))) comune
+        from stimaimmobile.rates
+        order by lower(trim(comune)), case when fonte = ${OMI_FONTE} then 1 else 0 end, comune`;
+      return { zones: [], comuni: comuni.map((row: {comune: string}) => row.comune), listino, engineVersion: ENGINE_VERSION };
+    });
+    return json(payload);
   }
   if (route === "POST /estimate") {
     const data = await readBody(req), area = region(data);
@@ -201,6 +248,17 @@ async function handle(req: Request): Promise<Response> {
         from stimaimmobile.contacts order by created_at desc limit 200`);
       return json({ contacts });
     }
+    if (route === "GET /admin/omi") {
+      const [stats] = await scope(tx => tx`
+        select
+          (select count(*)::int from stimaimmobile.omi_zones) as zones,
+          (select count(*)::int from stimaimmobile.omi_quotes) as quotes,
+          (select count(distinct semester)::int from stimaimmobile.omi_quotes) as semesters,
+          (select max(semester) from stimaimmobile.omi_quotes) as latest,
+          (select count(*)::int from stimaimmobile.rates where fonte = ${OMI_FONTE}) as rates,
+          (select count(*)::int from stimaimmobile.rates where fonte is distinct from ${OMI_FONTE}) as other_rates`);
+      return json({ ...stats, fonte: OMI_FONTE, license: OMI_LICENSE });
+    }
     if (route === "POST /admin/contact") {
       const data = await readBody(req);
       const id = field(data.id, "richiesta", 36);
@@ -222,9 +280,17 @@ async function handle(req: Request): Promise<Response> {
       if (pathname.endsWith("/preview")) return json({ ...preview, rows:preview.rows.slice(0,100) });
       if (preview.errors.length) return json({ error:"Correggi il CSV prima di pubblicare.", errors:preview.errors }, 422);
       await scope(async tx => {
-        // Serialize whole-list replacements, including the first publication with an empty table.
+        // Replace operator rows; keep OMI national coverage unless the CSV overrides the same key.
         await tx`select pg_advisory_xact_lock(548625, 1701)`;
-        await tx`delete from stimaimmobile.rates`;
+        await tx`delete from stimaimmobile.rates r
+          where r.fonte is distinct from ${OMI_FONTE}
+             or exists (
+               select 1 from jsonb_to_recordset(${tx.json(preview.rows)}::jsonb) as
+                 x(comune text,zona text,destinazione text,euro_mq numeric,fonte text,data_riferimento date)
+               where lower(trim(r.comune)) = lower(trim(x.comune))
+                 and lower(trim(r.zona)) = lower(trim(x.zona))
+                 and lower(trim(r.destinazione)) = lower(trim(x.destinazione))
+             )`;
         await tx`insert into stimaimmobile.rates(comune,zona,destinazione,euro_mq,fonte,data_riferimento,published_by)
           select r.*, ${userId}::uuid from jsonb_to_recordset(${tx.json(preview.rows)}::jsonb) as
           r(comune text,zona text,destinazione text,euro_mq numeric,fonte text,data_riferimento date)`;

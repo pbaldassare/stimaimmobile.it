@@ -7,7 +7,7 @@ const menu = document.querySelector('.menu-btn');
 const money = new Intl.NumberFormat('it-IT', {style:'currency', currency:'EUR'});
 const number = new Intl.NumberFormat('it-IT', {maximumFractionDigits:3});
 const titles = {home:'Valutazione immobiliare online', metodo:'Metodo', zone:'Zone servite', contatti:'Contatti', valutazione:'Valuta il tuo immobile', risultato:'La tua valutazione'};
-let zones = [], zonesPending, zonesLoaded = false;
+let zones = [], comuni = [], zonesByCity = new Map(), allZonesLoaded = false, listino = null, comuniPending;
 let questions = [], answers = {}, step = 0, wizard = false, result, checking = false;
 let place = {comune:'', zona:'', destinazione:''};
 let recapiti = {name:'', email:''};
@@ -37,15 +37,53 @@ async function request(path,body) {
   if (!response.ok || !data) throw Error(typeof data?.error === 'string' ? data.error : 'Il servizio è temporaneamente indisponibile. Riprova tra poco.');
   return data;
 }
+function fillCities() {
+  const list = document.querySelector('#cities');
+  if (list) list.innerHTML = options(comuni, '', '');
+}
+function rememberCity(rows) {
+  if (!rows.length) return;
+  const key = normalized(rows[0].comune);
+  zonesByCity.set(key, rows);
+  if (!comuni.some(name => same(name, rows[0].comune))) {
+    comuni = distinct([...comuni, rows[0].comune]);
+    fillCities();
+  }
+}
 async function loadZones() {
-  if(zonesLoaded) return zones;
-  if(!zonesPending) zonesPending = request('/api/zones').then(data=>{
-    if(!Array.isArray(data.zones)) throw Error('Non è stato possibile leggere il listino.');
-    zones=data.zones; zonesLoaded=true;
-    document.querySelector('#cities').innerHTML=options(distinct(zones.map(item=>item.comune)),'','');
-    return zones;
-  }).finally(()=>{zonesPending=null});
-  return zonesPending;
+  if (comuni.length || allZonesLoaded) return zones;
+  if (!comuniPending) {
+    comuniPending = (async () => {
+      const data = await request('/api/zones');
+      listino = data.listino || listino;
+      if (Array.isArray(data.zones) && data.zones.some(row => row.zona)) {
+        allZonesLoaded = true;
+        zones = data.zones;
+        comuni = distinct(zones.map(item => item.comune));
+      } else if (Array.isArray(data.comuni) && data.comuni.length) {
+        comuni = data.comuni;
+        zones = [];
+      } else if (Array.isArray(data.zones)) {
+        allZonesLoaded = true;
+        zones = data.zones;
+        comuni = distinct(zones.map(item => item.comune));
+      } else throw Error('Non è stato possibile leggere il listino.');
+      fillCities();
+      return zones;
+    })().finally(() => { comuniPending = null; });
+  }
+  return comuniPending;
+}
+async function zonesFor(city) {
+  if (!city) return [];
+  if (allZonesLoaded) return zones.filter(row => same(row.comune, city));
+  const key = normalized(city);
+  if (zonesByCity.has(key)) return zonesByCity.get(key);
+  const data = await request('/api/zones?comune=' + encodeURIComponent(city));
+  const rows = Array.isArray(data.zones) ? data.zones : [];
+  if (rows.length) rememberCity(rows);
+  else zonesByCity.set(key, []);
+  return rows;
 }
 function go(name) {
   if(route()===name) render();
@@ -64,7 +102,7 @@ function startExcelExample(){
   go('valutazione');
 }
 function syncCity(value){
-  const canonical=zones.find(item=>same(item.comune,value))?.comune || value.trim();
+  const canonical=comuni.find(name=>same(name,value)) || zones.find(item=>same(item.comune,value))?.comune || value.trim();
   if(!same(canonical,place.comune)){place.zona='';place.destinazione=''}
   place.comune=canonical;
 }
@@ -106,18 +144,37 @@ function methodPage(){
   page.innerHTML=caption('Il metodo')+'<h1>Come valutiamo il tuo immobile</h1><p class="page-description">Dalla quotazione locale al valore finale, ogni passaggio si basa su dati che puoi ritrovare nella relazione.</p><div class="method-list">'+stages.map(([i,title,body])=>'<article class="method-item"><span class="icon-tile">'+icon(i)+'</span><div><h2>'+title+'</h2><p>'+body+'</p></div></article>').join('')+'</div><p class="muted">La stima è indicativa e dipende dalla correttezza dei dati inseriti. Per una perizia formale occorre una verifica professionale.</p><a class="btn" href="#valutazione">Inizia una valutazione</a>';
 }
 function zonesPage(){
+  const covered = allZonesLoaded ? zones.length : (listino?.quotes || comuni.length);
   page.innerHTML=caption('Quotazioni locali')+'<h1>Zone servite</h1><p class="page-description">Verifica quali comuni, zone e destinazioni d’uso hanno una quotazione disponibile.</p>';
-  if(!zones.length){
+  if(!covered){
     page.insertAdjacentHTML('beforeend','<p class="notice">Il primo listino è in preparazione. Nel frattempo puoi richiedere una valutazione manuale.</p>'+contactForm(true));bindContact();return;
   }
-  page.insertAdjacentHTML('beforeend','<section class="panel">'+field('filter','Cerca comune o zona','<input class="input" id="filter" type="search" placeholder="Comune o quartiere">')+'<ul id="zone-list" class="zone-list"></ul><p id="zone-status" aria-live="polite"></p></section><a class="text-link" href="#valutazione">Verifica il tuo immobile</a>');
+  const source = listino?.omi
+    ? '<p class="muted">Listino territoriale da '+esc(listino.fonte)+' ('+esc(listino.license)+'), con l’esempio Excel di Brescia conservato. ondata redistribuisce i CSV; il download ufficiale è Forniture OMI dell’Agenzia delle Entrate.</p>'
+    : '';
+  page.insertAdjacentHTML('beforeend',source+'<section class="panel">'+field('filter','Cerca comune o zona','<input class="input" id="filter" type="search" placeholder="Comune o quartiere">')+'<ul id="zone-list" class="zone-list"></ul><p id="zone-status" aria-live="polite"></p></section><a class="text-link" href="#valutazione">Verifica il tuo immobile</a>');
   const filter=document.querySelector('#filter'),list=document.querySelector('#zone-list'),status=document.querySelector('#zone-status');
-  function show(){
-    const query=normalized(filter.value);
-    const rows=zones.filter(z=>normalized([z.comune,z.zona,z.destinazione].join(' ')).includes(query));
-    list.innerHTML=rows.map(z=>'<li><strong>'+esc(z.comune)+'</strong> · '+esc(z.zona)+' · '+esc(z.destinazione)+'</li>').join('');status.textContent=rows.length?'':'Nessuna zona corrispondente alla ricerca.';
+  let timer, revision=0;
+  async function show(){
+    const query=filter.value.trim();
+    const current=++revision;
+    if(query.length<2){
+      list.replaceChildren();
+      status.textContent=(listino?.comuni||comuni.length)+' comuni in listino. Scrivi almeno due caratteri per vedere le zone.';
+      return;
+    }
+    status.textContent='Ricerca in corso…';
+    try{
+      const rows = allZonesLoaded
+        ? zones.filter(z=>normalized([z.comune,z.zona,z.destinazione].join(' ')).includes(normalized(query))).slice(0,250)
+        : (await request('/api/zones?q='+encodeURIComponent(query))).zones || [];
+      if(current!==revision) return;
+      list.innerHTML=rows.map(z=>'<li><strong>'+esc(z.comune)+'</strong> · '+esc(z.zona)+' · '+esc(z.destinazione)+(z.fonte?' <span class="muted">('+esc(z.fonte)+')</span>':'')+'</li>').join('');
+      status.textContent=rows.length?'':'Nessuna zona corrispondente alla ricerca.';
+    }catch(err){if(current===revision) status.textContent=err.message}
   }
-  filter.addEventListener('input',show);show();
+  filter.addEventListener('input',()=>{clearTimeout(timer);timer=setTimeout(show,280)});
+  show();
 }
 function addressPage(){
   page.innerHTML = caption('Localizzazione') + '<h1>Trova il tuo immobile</h1><div class="panel" id="address-form"></div>';
@@ -160,10 +217,12 @@ function mountAddressSearch(container){
         choose.textContent = candidate.label;
         choose.addEventListener('click', async () => {
           try {
-            const rates = await loadZones();
+            await loadZones();
             if (current !== revision) return;
-            const local = rates.filter(row => same(row.comune, candidate.comune));
+            const local = await zonesFor(candidate.comune);
+            if (current !== revision) return;
             resetEstimate(local[0]?.comune || candidate.comune);
+            zones = allZonesLoaded ? zones : local;
             const matches = distinct(local.map(row => row.zona).filter(zone => candidate.districts.some(d => sameZone(d, zone))));
             if (matches.length === 1) place.zona = matches[0];
             checking = true;
@@ -183,12 +242,13 @@ function mountAddressSearch(container){
 function locationPage(){
   const matches=zones.filter(z=>same(z.comune,place.comune));
   const known=matches.length>0;
+  const covered=allZonesLoaded ? zones.length : comuni.length;
   const unavailable=checking && place.comune && !known;
   page.innerHTML=caption('Valutazione immobiliare')+'<h1>Dove si trova l’immobile?</h1><p class="page-description">Individua la quotazione per comune, zona e destinazione d’uso. Esempio già in listino: Brescia · Centro storico · Direzionale (65 m²).</p>';
   page.insertAdjacentHTML('beforeend','<p><a class="text-link" href="#indirizzo">Trova comune e zona dall’indirizzo</a> · <button type="button" class="text-link" id="use-brescia">Usa l’esempio Brescia</button></p>');
   document.querySelector('#use-brescia')?.addEventListener('click', startExcelExample);
-  if(unavailable || !zones.length){
-    page.insertAdjacentHTML('beforeend','<p class="notice">'+(!zones.length?'Il primo listino è in preparazione.':'Per '+esc(place.comune)+' il listino non contiene ancora una quotazione.')+' Puoi richiedere una valutazione manuale.</p>'+contactForm(true)+(zones.length?'<button id="another" class="btn secondary">Cerca un altro comune</button>':''));
+  if(unavailable || !covered){
+    page.insertAdjacentHTML('beforeend','<p class="notice">'+(!covered?'Il primo listino è in preparazione.':'Per '+esc(place.comune)+' il listino non contiene ancora una quotazione.')+' Puoi richiedere una valutazione manuale.</p>'+contactForm(true)+(covered?'<button id="another" class="btn secondary">Cerca un altro comune</button>':''));
     bindContact();document.querySelector('#another')?.addEventListener('click',()=>{resetEstimate();locationPage()});return;
   }
   const districtNames=distinct(matches.map(z=>z.zona));
@@ -200,8 +260,8 @@ function locationPage(){
   city.addEventListener('change',()=>{
     if(same(city.value,place.comune)||!city.value.trim())return;
     syncCity(city.value);checking=false;
-    if(known||zones.some(z=>same(z.comune,place.comune))){
-      locationPage();document.querySelector('#w-zone, #locate button')?.focus();
+    if(known||comuni.some(name=>same(name,place.comune))||zones.some(z=>same(z.comune,place.comune))){
+      go('valutazione');
     }
   });
   zone?.addEventListener('change',()=>{place.zona=zone.value;place.destinazione='';locationPage();document.querySelector('#w-use')?.focus()});
@@ -209,9 +269,16 @@ function locationPage(){
   document.querySelector('#manual')?.addEventListener('click',()=>{page.innerHTML=caption('Valutazione immobiliare')+'<h1>Valutazione manuale</h1>'+contactForm(true);bindContact();focusPage()});
   document.querySelector('#locate').addEventListener('submit',async e=>{
     e.preventDefault();syncCity(city.value);checking=true;
-    if(!known || !matches.some(z=>same(z.comune,place.comune)&&sameZone(z.zona,place.zona)&&same(z.destinazione,place.destinazione))){locationPage();return}
     const id=renderId,submit=e.currentTarget.querySelector('button');submit.disabled=true;
     try{
+      const local=await zonesFor(place.comune);
+      if(id!==renderId)return;
+      zones=allZonesLoaded?zones:local;
+      const found=local.filter(z=>same(z.comune,place.comune));
+      const ready=found.some(z=>sameZone(z.zona,place.zona)&&same(z.destinazione,place.destinazione));
+      if(!found.length || (place.zona && place.destinazione && !ready) || !place.zona || !place.destinazione){
+        locationPage();focusPage();return;
+      }
       if(!questions.length){const data=await request('/api/questions');if(!data.questions?.length)throw Error('Il questionario non è disponibile.');questions=data.questions}
       if(id!==renderId)return;wizard=true;step=0;questionPage();focusPage();
     }catch(err){if(id===renderId)document.querySelector('#locate .error').textContent=err.message;submit.disabled=false}
@@ -265,7 +332,7 @@ function resultPage(){
   const warnings=result.warnings||[];
   page.innerHTML=caption('Esito della valutazione')+'<h1>'+esc(warnings.length?'La tua stima parziale':'Il valore del tuo immobile')+'</h1><p class="page-description">'+esc([place.comune,place.zona,place.destinazione].join(' · '))+'</p><article class="panel"><p class="field-label">'+(warnings.length?'Valore stimato parziale':'Valore stimato')+'</p><p class="result-value">'+money.format(result.value)+'</p>'+
     (warnings.length?'<div class="notice"><strong>Limiti della stima</strong><ul>'+warnings.map(w=>'<li>'+esc(w)+'</li>').join('')+'</ul></div>':'')+
-    '<dl class="metrics"><div><dt>Minimo indicativo</dt><dd>'+money.format(result.minimum)+'</dd></div><div><dt>Prezzo al m²</dt><dd>'+money.format(result.rate)+'</dd></div><div><dt>Superficie commerciale</dt><dd>'+number.format(result.surface)+' m²</dd></div></dl>'+
+    '<dl class="metrics"><div><dt>Minimo indicativo</dt><dd>'+money.format(result.minimum)+'</dd></div><div><dt>Prezzo al m²</dt><dd>'+money.format(result.rate)+'</dd></div><div><dt>Superficie commerciale</dt><dd>'+number.format(result.surface)+' m²</dd></div>'+(result.fonte?'<div><dt>Fonte</dt><dd>'+esc(result.fonte)+'</dd></div>':'')+(result.data_riferimento?'<div><dt>Data listino</dt><dd>'+esc(result.data_riferimento)+'</dd></div>':'')+'</dl>'+
     '<h3>Fattori con maggiore incidenza</h3>'+(result.factors?.length?'<ul class="factor-list">'+[...result.factors].sort((a,b)=>Math.abs(b.value)-Math.abs(a.value)).slice(0,5).map(f=>'<li><span>'+esc(f.label)+'</span><strong>'+(f.value>0?'+':'')+number.format(f.value)+'%</strong></li>').join('')+'</ul>':'<p class="muted">Nessun correttivo rilevato.</p>')+
     '<div class="form-actions"><a id="pdf" class="btn">'+icon('download')+'Scarica il PDF</a>'+(result.contactReceived||recapiti.email?'':'<a class="btn secondary" href="#contatti">Richiedi un contatto</a>')+'</div></article>'+
     (result.contactReceived||recapiti.email
@@ -311,6 +378,10 @@ async function render(){
   page.innerHTML='<p role="status">Verifica delle quotazioni in corso…</p>';
   try{
     await loadZones();if(id!==renderId)return;
+    if(place.comune && !wizard && current==='valutazione'){
+      const local=await zonesFor(place.comune);if(id!==renderId)return;
+      zones=allZonesLoaded?zones:local;
+    }
     if(current==='zone')zonesPage();else if(wizard)questionPage();else locationPage();
   }catch(err){if(id!==renderId)return;page.innerHTML=caption('Valutazione immobiliare')+'<h1>Listino non disponibile</h1><p class="error" role="alert">'+esc(err.message)+'</p><button id="retry" class="btn">Riprova</button>'+contactForm(true);document.querySelector('#retry').addEventListener('click',render);bindContact()}
 }
