@@ -2,7 +2,6 @@ import { apiFetch, publicUrl } from './api-client.js';
 
 const page = document.querySelector('#page');
 const home = document.querySelector('#home');
-const cityInput = document.querySelector('#home-city');
 const navigation = document.querySelector('#nav');
 const menu = document.querySelector('.menu-btn');
 const money = new Intl.NumberFormat('it-IT', {style:'currency', currency:'EUR'});
@@ -13,6 +12,8 @@ let questions = [], answers = {}, step = 0, wizard = false, result, checking = f
 let place = {comune:'', zona:'', destinazione:''};
 let renderId = 0;
 titles.indirizzo = 'Cerca per indirizzo';
+titles.comune = 'Inserisci il comune';
+let cancelSearch;
 
 const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const icon = name => '<svg class="ico" aria-hidden="true"><use href="#'+name+'"/></svg>';
@@ -63,10 +64,6 @@ menu.addEventListener('click',()=>updateMenu(menu.getAttribute('aria-expanded')!
 document.addEventListener('keydown',e=>{if(e.key==='Escape' && menu.getAttribute('aria-expanded')==='true'){updateMenu(false);menu.focus()}});
 document.querySelector('.skip').addEventListener('click',e=>{e.preventDefault();document.querySelector('#main').focus()});
 document.querySelector('.nav-start').addEventListener('click',()=>{if(route()==='risultato')resetEstimate()});
-document.querySelector('#home-search').addEventListener('submit',e=>{
-  e.preventDefault();const city=cityInput.value.trim();if(!city){cityInput.value='';cityInput.reportValidity();return}
-  resetEstimate(city);checking=true;go('valutazione');
-});
 function contactForm(manual=false) {
   return '<form id="contact-form" class="panel"><h2>'+(manual?'Richiedi una valutazione manuale':'Scrivici')+'</h2><p class="muted">'+(manual?'Indica dove si trova l’immobile e come possiamo ricontattarti.':'Lascia i tuoi recapiti e descrivi la tua richiesta.')+'</p><div class="form-grid">'+
     (manual?field('c-city','Comune','<input id="c-city" class="input" name="comune" required maxlength="120" value="'+esc(place.comune)+'">')+field('c-zone','Zona o quartiere','<input id="c-zone" class="input" name="zona" maxlength="120" value="'+esc(place.zona)+'">')+field('c-use','Destinazione d’uso','<input id="c-use" class="input" name="destinazione" maxlength="120" value="'+esc(place.destinazione)+'" placeholder="Es. abitazione, ufficio">',true):'')+
@@ -109,17 +106,29 @@ function zonesPage(){
   filter.addEventListener('input',show);show();
 }
 function addressPage(){
-  page.innerHTML = caption('Localizzazione') + '<h1>Trova il tuo immobile</h1><form id="address-form" class="panel"><label for="address-query">Via, numero civico e comune</label><input class="input" id="address-query" required minlength="5" maxlength="220" autocomplete="street-address" placeholder="Es. Piazza della Loggia 1, Brescia"><p class="small muted">Premendo Cerca, invii l’indirizzo a Google Maps. <a href="https://policies.google.com/privacy?hl=it">Privacy Google</a> · <a href="https://maps.google.com/help/terms_maps/">Termini Maps</a></p><button class="btn">Cerca indirizzo</button></form><div id="address-results" aria-live="polite"></div><a href="#valutazione" class="text-link">Inserisci il comune a mano</a>';
-  const form = document.querySelector('#address-form');
-  const output = document.querySelector('#address-results');
-  const button = form.querySelector('button');
-  form.addEventListener('submit', async event => {
-    event.preventDefault();
-    button.disabled = true;
+  page.innerHTML = caption('Localizzazione') + '<h1>Trova il tuo immobile</h1><div class="panel" id="address-form"></div>';
+  mountAddressSearch(page.querySelector('#address-form'));
+}
+function mountAddressSearch(container){
+  const fieldId = container.id + '-query';
+  container.innerHTML = '<label for="'+fieldId+'">Via, numero civico e comune</label><input class="input" id="'+fieldId+'" maxlength="220" autocomplete="off" placeholder="Es. Piazza della Loggia 1, Brescia"><div class="address-results" aria-live="polite"></div><p class="small muted">Suggerimenti automatici di Google Maps. <a href="https://policies.google.com/privacy?hl=it">Privacy</a> · <a href="https://maps.google.com/help/terms_maps/">Termini</a></p><a href="#comune" class="text-link">Inserisci il comune a mano</a>';
+  const input = container.querySelector('input');
+  const output = container.querySelector('.address-results');
+  let timer, revision = 0;
+  cancelSearch = () => { clearTimeout(timer); revision++; };
+  input.addEventListener('input', () => {
+    cancelSearch();
+    output.replaceChildren();
+    const address = input.value.trim();
+    if (address.length < 5) return;
+    const current = revision;
+    timer = setTimeout(() => search(address, current), 650);
+  });
+  async function search(address, current) {
     output.textContent = 'Ricerca in corso…';
     try {
-      const {addresses} = await request('/api/address', {address:form.querySelector('input').value.trim()});
-      if (!form.isConnected) return;
+      const {addresses} = await request('/api/address', {address});
+      if (current !== revision) return;
       output.replaceChildren();
       if (!addresses.length) {
         output.textContent = 'Nessun indirizzo trovato. Aggiungi il comune o correggi il numero civico.';
@@ -138,7 +147,7 @@ function addressPage(){
         choose.addEventListener('click', async () => {
           try {
             const rates = await loadZones();
-            if (!form.isConnected) return;
+            if (current !== revision) return;
             const local = rates.filter(row => same(row.comune, candidate.comune));
             resetEstimate(local[0]?.comune || candidate.comune);
             const matches = distinct(local.map(row => row.zona).filter(zone => candidate.districts.some(d => same(d, zone))));
@@ -154,9 +163,8 @@ function addressPage(){
       attribution.textContent = 'Google Maps';
       box.append(attribution);
       output.append(box);
-    } catch (error) { output.textContent = error.message; }
-    finally { button.disabled = false; }
-  });
+    } catch (error) { if (current === revision) output.textContent = error.message; }
+  }
 }
 function locationPage(){
   const matches=zones.filter(z=>same(z.comune,place.comune));
@@ -238,13 +246,14 @@ function resultPage(){
   document.querySelector('#new-estimate').addEventListener('click',()=>{resetEstimate();go('valutazione')});
 }
 async function render(){
+  cancelSearch?.();
   const id=++renderId;const name=route();const current=Object.hasOwn(titles,name)?name:'home';
   updateMenu(false);document.title=titles[current]+' · StimaImmobile.it';
   navigation.querySelectorAll('a').forEach(a=>{if(a.hash==='#'+current)a.setAttribute('aria-current','page');else a.removeAttribute('aria-current')});
   home.hidden=current!=='home';page.hidden=current==='home';focusPage();
-  if(current==='home'){loadZones().catch(()=>{});return}
+  if(current==='home'){mountAddressSearch(document.querySelector('#home-search'));loadZones().catch(()=>{});return}
   if(current==='metodo'){methodPage();return}
-  if(current==='indirizzo'){addressPage();return}
+  if(current==='indirizzo'||(current==='valutazione'&&!place.comune&&!wizard)){addressPage();return}
   if(current==='contatti'){page.innerHTML=caption('Contatti')+'<h1>Come possiamo aiutarti?</h1>'+contactForm();bindContact();return}
   if(current==='risultato'){resultPage();return}
   page.innerHTML='<p role="status">Verifica delle quotazioni in corso…</p>';
