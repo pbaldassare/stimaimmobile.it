@@ -17,11 +17,26 @@ test('Brescia workbook case reproduces every effective contribution and both amo
 });
 
 test('unavailable floor and year formulas are identified on partial estimates', () => {
-  const input = { ...referenceInputs, floor: 'ultimo', year: 2000 };
+  const input = { ...referenceInputs, floor: 'terra', year: 'Dopo il 2008' };
   const result = calculate(input, 1450);
   assert.equal(result.correction, -7);
   assert.equal(result.warnings.length, 2);
   assert.match(result.warnings[0], /Piano/);
+});
+
+test('piano and anno selects follow the PHP options without inventing missing maps', () => {
+  const floor = questions.find(q => q.id === 'floor');
+  const year = questions.find(q => q.id === 'year');
+  assert.equal(ENGINE_VERSION, 'xls-1.1.0');
+  assert.equal(floor.type, 'select');
+  assert.deepEqual(floor.options.slice(0, 4), ['rialzato', 'interrato', 'terra', '1']);
+  assert.ok(floor.options.includes('50'));
+  assert.equal(year.type, 'select');
+  assert.ok(year.options.includes('1900'));
+  assert.ok(year.options.includes('Di nuova costruzione'));
+  assert.ok(year.options.includes('Prima del 1920'));
+  assert.throws(() => calculate({ ...referenceInputs, floor: 'ultimo' }, 1450), RangeError);
+  assert.deepEqual(calculate({ ...referenceInputs, year: 1900 }, 1450).warnings, []);
 });
 
 test('parking uses the workbook fallback, including for zero or blank', () => {
@@ -85,7 +100,7 @@ test('public question identifiers are unique and score metadata stays on the ser
 });
 
 test('PDF bytes include the saved estimate, source, dates and qualifications', () => {
-  const inputs = { ...referenceInputs, floor: 'ultimo' };
+  const inputs = { ...referenceInputs, floor: 'terra' };
   const result = calculate(inputs, 1450);
   const pdf = new TextDecoder().decode(makePdf({ result, inputs, comune: 'Comune prova', zona: 'Centro',
     destinazione: 'Direzionale', fonte: 'Listino prova', data_riferimento: '2025-01-01', createdAt: '2026-01-01T00:00:00Z', engineVersion: ENGINE_VERSION }));

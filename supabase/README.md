@@ -24,6 +24,14 @@ delete from stimaimmobile.admins where user_id = 'UUID_VERIFICATO'::uuid;
 
 Scarica il modello dall’area amministrativa o usa `data/modello-listino.csv`. Ogni riga rappresenta una combinazione di comune, zona e destinazione d’uso. Inserisci la quotazione in euro al metro quadro, la fonte e la data di riferimento nel formato `AAAA-MM-GG`. Il modello contiene solo le intestazioni.
 
+Il file `data/listino-esempio-excel.csv` pubblica la quotazione d’esempio del foglio CALCOLI B80: Brescia, Centro storico, Direzionale, 1450 €/m², fonte `esempio Excel CALCOLI B80`, data `2014-04-04`. Con un account abilitato in `stimaimmobile.admins`:
+
+```bash
+STIMAIMMOBILE_ADMIN_EMAIL='…' STIMAIMMOBILE_ADMIN_PASSWORD='…' npm run publish:listino
+```
+
+Il comando sostituisce l’intero listino con quel CSV. L’API accetta anche il refuso Excel `Cenro storico` come alias di `Centro storico`.
+
 Salva in UTF-8. Sono ammessi il punto e virgola e la virgola come delimitatori. Con valori decimali separati da virgola, usa il punto e virgola come delimitatore oppure racchiudi il numero tra virgolette. Carica dal pannello un file fino a 1 MiB e controlla le prime 30 righe in anteprima. L’intero file deve superare i controlli per la pubblicazione. L’API accetta fino a 10.000 quotazioni e 4 MiB di richiesta JSON, restituendo fino a 100 righe di anteprima.
 
 Ogni pubblicazione sostituisce l’intero listino in una transazione. Prepara un file completo anche per gli aggiornamenti. Ogni relazione emessa conserva quotazione, fonte, data e risultati utilizzati. Una zona diventa visibile nel sito dopo la pubblicazione.
