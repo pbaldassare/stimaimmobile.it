@@ -21,7 +21,9 @@ Nel pannello amministrativo si consultano e si aggiornano le richieste (stime co
 
 ## Modello
 
-Il calcolo centrale equivale a superficie commerciale × €/m² × (1 + somma dei correttivi / 100). Il minimo indicativo è il 90% del valore centrale, calcolato prima dell’arrotondamento in euro. Il massimo scritto a mano nell’esempio Excel è escluso. I test conservano i contributi numerici dell’esempio senza dati personali, con tre correttivi riparati rispetto al foglio: porta d’ingresso «va bene così» +1 (non +6), pavimenti «nessuno» +1 (non testo ignorato da SUM), rumore «intenso» −1.9 (non testo ignorato da SUM).
+Il calcolo centrale equivale a superficie commerciale × €/m² × (1 + somma dei correttivi / 100). La base €/m² è la quotazione OMI della zona pubblicata in `stimaimmobile.rates` (punto medio min/max del semestre più recente, fonte «Agenzia delle Entrate – OMI»), con l’esempio Excel di Brescia conservato se la chiave non coincide. Il minimo indicativo è il 90% del valore centrale, calcolato prima dell’arrotondamento in euro. Il massimo scritto a mano nell’esempio Excel è escluso.
+
+I campi del questionario, il tipo di controllo, le opzioni e i coefficienti vivono in Postgres (`stimaimmobile.valuation_fields` e `valuation_options`) e si modificano dall’area riservata, senza un nuovo deploy. Il seme iniziale copia le mappe Excel di `engine/model.mjs`. Il questionario pubblico è a tendina, sì/no o conteggio 0–N: niente testo libero sui correttivi. La versione del motore è `omi-xls-2.0.0`. I test conservano i contributi numerici dell’esempio senza dati personali, con tre correttivi riparati rispetto al foglio: porta d’ingresso «va bene così» +1 (non +6), pavimenti «nessuno» +1 (non testo ignorato da SUM), rumore «intenso» −1.9 (non testo ignorato da SUM).
 
 Il file conserva soltanto i risultati di esempio per piano rialzato e anno 1900 nelle celle E14 ed E20 di CALCOLI. Per altri valori dichiarati, il sito identifica la stima come parziale e riporta nel risultato e nel PDF i correttivi mancanti. Le pagine `/faq/` e `/blog/` spiegano listino, correttivi e limiti della stima indicativa.
 

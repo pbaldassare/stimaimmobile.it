@@ -138,7 +138,7 @@ function bindContact(){
 function methodPage(){
   const stages=[
     ['pin','La quotazione della zona','Ogni quotazione è associata a comune, zona e destinazione d’uso. La relazione riporta il prezzo di riferimento e la sua provenienza.'],
-    ['building','Le caratteristiche della proprietà','La superficie commerciale viene moltiplicata per il prezzo al metro quadro. I correttivi tengono conto delle risposte su edificio, interni, accessori e contesto.'],
+    ['building','Le caratteristiche della proprietà','La superficie commerciale viene moltiplicata per la quotazione OMI della zona (€/m²). Ogni risposta del questionario è un plus o minus percentuale su quella base.'],
     ['report','Il valore e il minimo indicativo','Il risultato comprende il valore centrale e un minimo pari al 90% di quel valore. Il PDF raccoglie i dati dichiarati e il dettaglio del calcolo.']
   ];
   page.innerHTML=caption('Il metodo')+'<h1>Come valutiamo il tuo immobile</h1><p class="page-description">Dalla quotazione locale al valore finale, ogni passaggio si basa su dati che puoi ritrovare nella relazione.</p><div class="method-list">'+stages.map(([i,title,body])=>'<article class="method-item"><span class="icon-tile">'+icon(i)+'</span><div><h2>'+title+'</h2><p>'+body+'</p></div></article>').join('')+'</div><p class="muted">La stima è indicativa e dipende dalla correttezza dei dati inseriti. Per una perizia formale occorre una verifica professionale.</p><a class="btn" href="#valutazione">Inizia una valutazione</a>';
@@ -292,18 +292,29 @@ function questionPage(){
   const form=document.querySelector('#question-form'),container=document.querySelector('#question-fields');
   for(const q of questions.filter(q=>q.group===group)){
     const id='q-'+q.id,value=answers[q.id]??'';
-    let control=q.type==='select'?'<select>'+options(q.options,value)+'</select>':'<input class="input" type="'+(q.type==='number'?'number':'text')+'" value="'+esc(value)+'">';
-    container.insertAdjacentHTML('beforeend',field(id,q.label,control));const row=container.lastElementChild,input=row.querySelector('input,select');
-    input.id=id;input.name=q.id;input.required=Boolean(q.required);row.hidden=!visible(q);input.disabled=row.hidden;
+    let control;
+    if(q.type==='number') control='<input class="input" type="number" value="'+esc(value)+'">';
+    else if(q.type==='yesno') control='<div class="choice-row" role="radiogroup" aria-label="'+esc(q.label)+'">'+(q.options||[]).map(opt=>'<label class="choice"><input type="radio" name="'+esc(q.id)+'" value="'+esc(opt)+'"'+(same(opt,value)?' checked':'')+'> '+esc(opt)+'</label>').join('')+'</div>';
+    else control='<select>'+options(q.options,value)+'</select>';
+    container.insertAdjacentHTML('beforeend',field(id,q.label,control));const row=container.lastElementChild;
+    const controls=[...row.querySelectorAll('input,select')];
+    const input=controls[0];
+    if(input && q.type!=='yesno'){input.id=id;input.name=q.id}
     if(q.type==='number'){input.step=q.step??'any';if(q.min!==undefined)input.min=q.min;if(q.max!==undefined)input.max=q.max}
-    input.addEventListener(q.type==='select'?'change':'input',()=>{
-      answers[q.id]=input.value;
+    row.hidden=!visible(q);
+    controls.forEach(item=>{item.required=Boolean(q.required);item.disabled=row.hidden});
+    const read=()=>{if(q.type==='yesno'){const checked=row.querySelector('input:checked');return checked?checked.value:''}return input.value};
+    controls.forEach(item=>item.addEventListener(q.type==='number'?'input':'change',()=>{
+      answers[q.id]=read();
       for(const dependent of questions.filter(item=>item.when)){
         if(!visible(dependent))delete answers[dependent.id];
-        const dependentInput=form.elements.namedItem(dependent.id);
-        if(dependentInput){dependentInput.disabled=!visible(dependent);dependentInput.closest('.field').hidden=dependentInput.disabled;if(dependentInput.disabled)dependentInput.value=''}
+        const box=form.querySelector('#q-'+dependent.id)?.closest('.field') || form.querySelector('[name="'+dependent.id+'"]')?.closest('.field');
+        if(!box)continue;
+        const show=visible(dependent);
+        box.hidden=!show;
+        box.querySelectorAll('input,select').forEach(dep=>{dep.disabled=!show;if(!show){if(dep.type==='radio')dep.checked=false;else dep.value=''}});
       }
-    });
+    }));
   }
   if(step===groups.length-1){
     container.insertAdjacentHTML('beforeend',field('q-name','Nome (facoltativo)','<input id="q-name" class="input" autocomplete="name" maxlength="120" value="'+esc(recapiti.name)+'">')+

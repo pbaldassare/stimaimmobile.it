@@ -1,5 +1,7 @@
 import postgres from "npm:postgres@3.4.7";
-import { calculate, normalizeInputs, questions, ENGINE_VERSION } from "../../../engine/valuation.mjs";
+import { calculate, normalizeInputs, ENGINE_VERSION } from "../../../engine/valuation.mjs";
+import { fields as seedFields } from "../../../engine/model.mjs";
+import { fromAdminFields, fromDbRows, publicQuestions, toAdminFields, toDbRows } from "../../../engine/catalog.mjs";
 import { makePdf } from "../../../engine/pdf.mjs";
 import { canonicalZone } from "../../../engine/zones.mjs";
 import { OMI_FONTE, OMI_LICENSE } from "../../../engine/omi.mjs";
@@ -85,6 +87,66 @@ async function requireAdmin(token: string) {
   if (!users.length) throw new HttpError(403, "Account non abilitato a StimaImmobile.");
   return user.id;
 }
+
+function isMissingRelation(error: unknown) {
+  return typeof error === "object" && error !== null && "code" in error && String(error.code) === "42P01";
+}
+function referenceDate(value: unknown) {
+  if (value instanceof Date && Number.isFinite(value.valueOf())) return value.toISOString().slice(0, 10);
+  const text = String(value ?? "").slice(0, 10);
+  return /^\d{4}-\d{2}-\d{2}$/.test(text) ? text : "";
+}
+async function loadCatalog(tx: postgres.TransactionSql) {
+  try {
+    const fieldRows = await tx`select id, label, group_name, control_type, sort_order, required, active, partial,
+      min_value, max_value, step_value, fallback, when_field_id, when_values
+      from stimaimmobile.valuation_fields order by sort_order, id`;
+    if (!fieldRows.length) return seedFields;
+    const optionRows = await tx`select field_id, value, label, coefficient, scored, public, sort_order, aliases
+      from stimaimmobile.valuation_options order by field_id, sort_order`;
+    return fromDbRows(fieldRows, optionRows);
+  } catch (error) {
+    if (isMissingRelation(error)) return seedFields;
+    throw error;
+  }
+}
+async function saveCatalog(tx: postgres.TransactionSql, catalog: typeof seedFields) {
+  const { fields: fieldRows, options } = toDbRows(catalog);
+  await tx`select pg_advisory_xact_lock(548625, 1702)`;
+  await tx`truncate stimaimmobile.valuation_fields cascade`;
+  await tx`insert into stimaimmobile.valuation_fields (
+      id, label, group_name, control_type, sort_order, required, active, partial,
+      min_value, max_value, step_value, fallback, when_field_id, when_values)
+    select id, label, group_name, control_type, sort_order, required, active, partial,
+           min_value, max_value, step_value, fallback, when_field_id, when_values
+    from jsonb_to_recordset(${tx.json(fieldRows)}::jsonb) as r(
+      id text, label text, group_name text, control_type text, sort_order integer,
+      required boolean, active boolean, partial boolean,
+      min_value numeric, max_value numeric, step_value numeric, fallback numeric,
+      when_field_id text, when_values text[])`;
+  if (options.length) {
+    await tx`insert into stimaimmobile.valuation_options (
+        field_id, value, label, coefficient, scored, public, sort_order, aliases)
+      select field_id, value, label, coefficient, scored, public, sort_order, aliases
+      from jsonb_to_recordset(${tx.json(options)}::jsonb) as r(
+        field_id text, value text, label text, coefficient numeric, scored boolean,
+        public boolean, sort_order integer, aliases text[])`;
+  }
+}
+async function lookupRate(tx: postgres.TransactionSql, area: {comune:string,zona:string,destinazione:string}) {
+  try {
+    const [rate] = await tx`select * from stimaimmobile.lookup_zone_rate(${area.comune}, ${area.zona}, ${area.destinazione})`;
+    if (rate) return rate;
+  } catch (error) {
+    if (!isMissingRelation(error)) throw error;
+  }
+  const [rate] = await tx`select comune,zona,destinazione,euro_mq,euro_mq as euro_mq_min,euro_mq as euro_mq_max,
+    fonte,data_riferimento::text,'listino'::text as source from stimaimmobile.rates
+    where lower(trim(comune)) = lower(trim(${area.comune}))
+      and lower(trim(zona)) = lower(trim(${area.zona}))
+      and lower(trim(destinazione)) = lower(trim(${area.destinazione}))`;
+  return rate;
+}
 async function resendApiKey() {
   try {
     const [row] = await scope(tx => tx`select stimaimmobile.resend_api_key() as key`);
@@ -108,7 +170,10 @@ async function handle(req: Request): Promise<Response> {
   const requestUrl = new URL(req.url);
   const pathname = requestUrl.pathname.split("/stimaimmobile-api").at(-1) || "/";
   const route = req.method + " " + pathname;
-  if (route === "GET /questions") return json({ questions, engineVersion: ENGINE_VERSION });
+  if (route === "GET /questions") {
+    const catalog = await scope(loadCatalog);
+    return json({ questions: publicQuestions(catalog), engineVersion: ENGINE_VERSION });
+  }
   if (route === "POST /address") {
     const data = await readBody(req, 2048);
     const address = field(data.address, "indirizzo", 220);
@@ -184,18 +249,21 @@ async function handle(req: Request): Promise<Response> {
     const token = toHex(crypto.getRandomValues(new Uint8Array(32)));
     const tokenDigest = await digest(token);
     const result = await scope(async tx => {
-      const [rate] = await tx`select comune,zona,destinazione,euro_mq,fonte,data_riferimento::text from stimaimmobile.rates
-        where lower(trim(comune)) = lower(trim(${area.comune}))
-          and lower(trim(zona)) = lower(trim(${area.zona}))
-          and lower(trim(destinazione)) = lower(trim(${area.destinazione}))`;
+      const rate = await lookupRate(tx, area);
       if (!rate) throw new HttpError(404, "Quotazione indisponibile per questa zona e destinazione.");
       area.comune = rate.comune; area.zona = rate.zona; area.destinazione = rate.destinazione;
+      const catalog = await loadCatalog(tx);
       let inputs, result;
       try {
-        inputs = normalizeInputs(data.inputs);
-        result = calculate(inputs, Number(rate.euro_mq));
+        inputs = normalizeInputs(data.inputs, catalog);
+        result = calculate(inputs, Number(rate.euro_mq), catalog);
       } catch (error) { throw new HttpError(422, error instanceof Error ? error.message : "Verifica i dati inseriti."); }
-      const snapshot = { inputs, result, ...area, fonte:rate.fonte, data_riferimento:rate.data_riferimento,
+      const dataRiferimento = referenceDate(rate.data_riferimento);
+      const snapshot = { inputs, result, ...area, fonte:rate.fonte, data_riferimento:dataRiferimento,
+        rateMin: rate.euro_mq_min == null ? undefined : Number(rate.euro_mq_min),
+        rateMax: rate.euro_mq_max == null ? undefined : Number(rate.euro_mq_max),
+        rateSource: rate.source || (String(rate.fonte || "").includes("OMI") ? "omi" : "listino"),
+        questions: publicQuestions(catalog),
         createdAt:new Date().toISOString(), engineVersion:ENGINE_VERSION };
       await tx`insert into stimaimmobile.estimates(token_digest,snapshot) values(${tokenDigest},${tx.json(snapshot)})`;
       if (email) {
@@ -273,6 +341,18 @@ async function handle(req: Request): Promise<Response> {
         returning id,created_at,updated_at,name,email,message,comune,zona,destinazione,kind,status,notes`);
       if (!contact) throw new HttpError(404, "Richiesta non trovata.");
       return json({ contact });
+    }
+    if (route === "GET /admin/fields") {
+      const catalog = await scope(loadCatalog);
+      return json({ fields: toAdminFields(catalog), engineVersion: ENGINE_VERSION });
+    }
+    if (route === "POST /admin/fields" || route === "POST /admin/fields/reset") {
+      let catalog;
+      try {
+        catalog = route.endsWith("/reset") ? seedFields : fromAdminFields(await readBody(req, 524288));
+      } catch (error) { throw new HttpError(422, error instanceof Error ? error.message : "Verifica i campi."); }
+      await scope(tx => saveCatalog(tx, catalog));
+      return json({ fields: toAdminFields(catalog), engineVersion: ENGINE_VERSION, reset: route.endsWith("/reset") });
     }
     if (route === "POST /admin/preview" || route === "POST /admin/publish") {
       const { csv } = await readBody(req, 4 * 1024 * 1024);

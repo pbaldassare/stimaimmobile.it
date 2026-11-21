@@ -1,4 +1,4 @@
-import { questions } from './valuation.mjs';
+import { questions as seedQuestions } from './valuation.mjs';
 
 const euros = n => new Intl.NumberFormat('it-IT', { style: 'currency', currency: 'EUR' }).format(n);
 const number = n => new Intl.NumberFormat('it-IT', { maximumFractionDigits: 2 }).format(n);
@@ -131,7 +131,8 @@ export function makePdf(snapshot) {
   y -= 116;
   heading('Dati della valutazione');
   row('Superficie commerciale', number(result.surface) + ' m²');
-  row('Quotazione di partenza', euros(result.rate) + '/m²');
+  const band = snapshot.rateMin != null && snapshot.rateMax != null && Number(snapshot.rateMin) !== Number(snapshot.rateMax);
+  row('Quotazione di partenza', euros(result.rate) + '/m²' + (band ? ' (OMI ' + euros(snapshot.rateMin) + '–' + euros(snapshot.rateMax) + ')' : ''));
   row('Correzione complessiva', pct(result.correction ?? result.factors.reduce((sum, factor) => sum + factor.value, 0)));
   row('Fonte del listino', snapshot.fonte ?? snapshot.source ?? 'Non specificata');
   row('Data del listino', date(snapshot.data_riferimento ?? snapshot.referenceDate));
@@ -149,6 +150,7 @@ export function makePdf(snapshot) {
 
   const inputs = snapshot.inputs ?? {};
   const applied = new Map((result.factors ?? []).map(item => [item.id, item.value]));
+  const questions = snapshot.questions?.length ? snapshot.questions : seedQuestions;
   const groups = [...new Set(questions.map(q => q.group))];
   const answered = questions.filter(q => Object.hasOwn(inputs, q.id) || applied.has(q.id));
   if (answered.length) {

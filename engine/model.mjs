@@ -19,7 +19,8 @@ export const fields = [
     "id": "purpose",
     "label": "Finalità della valutazione",
     "group": "Edificio",
-    "type": "text"
+    "type": "select",
+    "options": ["Vendita", "Locazione", "Successione", "Assicurazione"]
   },
   {
     "id": "occupancy",
@@ -73,11 +74,12 @@ export const fields = [
     "id": "buildingType",
     "label": "Tipologia di edificio",
     "group": "Edificio",
-    "type": "text"
+    "type": "select",
+    "options": ["storico", "civile", "signorile", "popolare", "industriale", "rustico"]
   },
   {
     "id": "floor",
-    "label": "Piano dell'unità",
+    "label": "Piano",
     "group": "Edificio",
     "type": "select",
     "options": ["rialzato", ...phpFloors],
@@ -88,7 +90,7 @@ export const fields = [
   },
   {
     "id": "totalFloors",
-    "label": "Piani totali dell'edificio",
+    "label": "Piani totali",
     "group": "Edificio",
     "type": "number",
     "min": 0,
@@ -96,7 +98,7 @@ export const fields = [
   },
   {
     "id": "singleLevel",
-    "label": "L'immobile è su un unico livello?",
+    "label": "L'immobile si distribuisce sullo stesso piano/livello",
     "group": "Edificio",
     "type": "select",
     "scores": {
@@ -106,7 +108,7 @@ export const fields = [
   },
   {
     "id": "levels",
-    "label": "Numero di livelli occupati",
+    "label": "Se no, su quali piani",
     "group": "Edificio",
     "type": "number",
     "min": 0,
@@ -127,9 +129,10 @@ export const fields = [
   },
   {
     "id": "levelNames",
-    "label": "Quali piani occupa?",
+    "label": "Quali piani",
     "group": "Edificio",
-    "type": "text",
+    "type": "select",
+    "options": ["rialzato", ...phpFloors],
     "when": {
       "id": "singleLevel",
       "values": [
@@ -139,7 +142,7 @@ export const fields = [
   },
   {
     "id": "architecture",
-    "label": "Pregio architettonico",
+    "label": "Valenza architettonica",
     "group": "Edificio",
     "type": "select",
     "scores": {
@@ -555,7 +558,7 @@ export const fields = [
   },
   {
     "id": "exposure",
-    "label": "Esposizione dell'unità",
+    "label": "L'alloggio prende aria e luce",
     "group": "Dotazioni",
     "type": "select",
     "scores": {
@@ -566,7 +569,7 @@ export const fields = [
   },
   {
     "id": "view",
-    "label": "Vista dall'immobile",
+    "label": "Vista dell'immobile",
     "group": "Dotazioni",
     "type": "select",
     "scores": {
@@ -745,17 +748,19 @@ export const fields = [
     "id": "doorFinish",
     "label": "Finiture delle porte interne",
     "group": "Manutenzione",
-    "type": "text"
+    "type": "select",
+    "options": ["basso livello", "medio livello", "alto livello"]
   },
   {
     "id": "energyCertificate",
-    "label": "Attestato energetico",
+    "label": "Certificazione energetica",
     "group": "Dotazioni",
-    "type": "text"
+    "type": "select",
+    "options": ["Devo farla", "Presente"]
   },
   {
     "id": "energyClass",
-    "label": "Classe energetica del modello",
+    "label": "Classe energetica",
     "group": "Dotazioni",
     "type": "select",
     "scores": {
@@ -770,7 +775,7 @@ export const fields = [
   },
   {
     "id": "zoneType",
-    "label": "Caratteristica prevalente della zona",
+    "label": "La zona",
     "group": "Zona e servizi",
     "type": "select",
     "scores": {
@@ -795,7 +800,7 @@ export const fields = [
   },
   {
     "id": "noise",
-    "label": "Rumorosità della zona",
+    "label": "Inquinamento acustico",
     "group": "Zona e servizi",
     "type": "select",
     "scores": {
@@ -839,3 +844,22 @@ export const fields = [
     }
   },
 ];
+
+const YES_NO = new Set([
+  'singleLevel', 'alarm', 'centralHeating', 'independentHeating',
+  'airConditioning', 'intercom', 'concierge', 'elevator'
+]);
+const COUNT_MAX = { leaseYears: 6, totalFloors: 30, levels: 10 };
+
+for (const field of fields) {
+  if (YES_NO.has(field.id)) {
+    field.type = 'yesno';
+    field.options = Object.keys(field.scores);
+  } else if (field.type === 'number' && field.id !== 'surface') {
+    field.type = 'count';
+    field.min = field.min ?? 0;
+    field.max = COUNT_MAX[field.id] ?? 10;
+    field.step = 1;
+  }
+}
+
