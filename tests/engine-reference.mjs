@@ -1,4 +1,5 @@
 // Numeric reference case from the workbook. Identifying fields are omitted.
+// floorRepairs "nessuno" uses the intended +1 (CALCOLI E58), not Excel SUM-as-text 0.
 export const referenceInputs = {
   "purpose": "Vendita",
   "occupancy": "libero",
@@ -84,7 +85,7 @@ export const excelContributions = {
   "elevator": -1.0,
   "layout": 1.0,
   "condition": -2.0,
-  "floorRepairs": 0,
+  "floorRepairs": 1,
   "wallRepairs": -1.6,
   "bathRepairs": 1.5,
   "entranceDoor": -0.6,
