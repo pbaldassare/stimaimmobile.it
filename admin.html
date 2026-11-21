@@ -1,0 +1,10 @@
+<!doctype html>
+<html lang="it"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex"><meta name="referrer" content="no-referrer"><title>Gestione listino · StimaImmobile.it</title><link rel="stylesheet" href="./admin.css"><script type="module" src="./admin.js"></script></head>
+<body><header><a class="brand" href="./">StimaImmobile<span>.it</span></a><span>Area amministrativa</span></header>
+<main><section id="access"><h1>Accedi al listino</h1><p>Usa l’account abilitato alla gestione di StimaImmobile.</p><form id="login"><label>Email<input name="email" type="email" required autocomplete="username"></label><label>Password<input name="password" type="password" required autocomplete="current-password"></label><button>Accedi</button></form></section>
+<section id="management" hidden><div class="top"><h1>Gestione listino</h1><button id="logout" class="outline">Esci</button></div>
+<article><h2>Importa le quotazioni</h2><p>Il nuovo listino sostituisce quello in uso. Le valutazioni già emesse conservano la quotazione originale.</p><a href="./modello-listino.csv" download>Scarica il modello CSV</a>
+<form id="load"><label>File CSV in formato UTF-8<input name="list" type="file" accept=".csv,text/csv" required></label><button>Verifica anteprima</button></form>
+<section id="review" hidden><h3>Anteprima del listino</h3><p id="summary"></p><ul id="issues"></ul><div class="scroll"><table><thead><tr><th>Comune</th><th>Zona</th><th>Destinazione</th><th>€/m²</th><th>Fonte</th><th>Data</th></tr></thead><tbody id="rows"></tbody></table></div><button id="publish" disabled>Pubblica e sostituisci il listino</button></section></article>
+<article><div class="top"><h2>Richieste di contatto</h2><button class="outline" id="refresh">Aggiorna</button></div><div id="contacts"></div></article></section>
+<p id="status" role="status" aria-live="polite"></p></main></body></html>

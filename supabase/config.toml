@@ -1,0 +1,5 @@
+project_id = "stimaimmobile"
+
+[functions.stimaimmobile-api]
+verify_jwt = false
+entrypoint = "./functions/stimaimmobile-api/index.ts"
