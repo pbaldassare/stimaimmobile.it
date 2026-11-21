@@ -4,6 +4,7 @@ import { makePdf } from "../../../engine/pdf.mjs";
 import { canonicalZone } from "../../../engine/zones.mjs";
 import { previewCatalog } from "./catalog.mjs";
 import { addressCandidates } from "./geocoding.mjs";
+import { isEmail, requestKind, sendThankYou, MAIL_FROM, STATUSES } from "./mail.mjs";
 
 const cors = {
   "Access-Control-Allow-Origin": "*",
@@ -80,6 +81,24 @@ async function requireAdmin(token: string) {
   if (!users.length) throw new HttpError(403, "Account non abilitato a StimaImmobile.");
   return user.id;
 }
+async function resendApiKey() {
+  try {
+    const [row] = await scope(tx => tx`select stimaimmobile.resend_api_key() as key`);
+    if (typeof row?.key === "string" && row.key) return row.key;
+  } catch (error) {
+    console.error("Resend vault unavailable", error instanceof Error ? error.name : "unknown");
+  }
+  return Deno.env.get("RESEND_API_KEY") || "";
+}
+async function notifyThankYou(name: string, email: string) {
+  try {
+    const apiKey = await resendApiKey();
+    const result = await sendThankYou({ apiKey, from: MAIL_FROM, to: email, name });
+    if (!result.sent) console.error("Resend thank-you skipped", result.reason);
+  } catch (error) {
+    console.error("Resend thank-you failed", error instanceof Error ? error.name : "unknown");
+  }
+}
 async function handle(req: Request): Promise<Response> {
   if (req.method === "OPTIONS") return new Response(null, { status: 204, headers: cors });
   const pathname = new URL(req.url).pathname.split("/stimaimmobile-api").at(-1) || "/";
@@ -112,6 +131,9 @@ async function handle(req: Request): Promise<Response> {
     area.zona = canonicalZone(area.zona);
     if (!data.inputs || typeof data.inputs !== "object" || Array.isArray(data.inputs))
       throw new HttpError(422, "Compila le caratteristiche dell’immobile.");
+    const name = field(data.name, "nome", 120, false);
+    const email = field(data.email, "email", 254, false);
+    if (email && !isEmail(email)) throw new HttpError(422, "Inserisci un indirizzo email valido.");
     const token = toHex(crypto.getRandomValues(new Uint8Array(32)));
     const tokenDigest = await digest(token);
     const result = await scope(async tx => {
@@ -129,8 +151,15 @@ async function handle(req: Request): Promise<Response> {
       const snapshot = { inputs, result, ...area, fonte:rate.fonte, data_riferimento:rate.data_riferimento,
         createdAt:new Date().toISOString(), engineVersion:ENGINE_VERSION };
       await tx`insert into stimaimmobile.estimates(token_digest,snapshot) values(${tokenDigest},${tx.json(snapshot)})`;
-      return { ...result, fonte:snapshot.fonte, data_riferimento:snapshot.data_riferimento, createdAt:snapshot.createdAt };
+      if (email) {
+        const summary = `Stima indicativa ${result.value} € (minimo ${result.minimum} €), superficie ${result.surface} m².`;
+        await tx`insert into stimaimmobile.contacts(name,email,message,comune,zona,destinazione,kind)
+          values(${name || "Visitatore"},${email},${summary},${area.comune},${area.zona},${area.destinazione},'estimate')`;
+      }
+      return { ...result, fonte:snapshot.fonte, data_riferimento:snapshot.data_riferimento, createdAt:snapshot.createdAt,
+        contactReceived:Boolean(email) };
     });
+    if (email) await notifyThankYou(name, email);
     return json({ ...result, engineVersion: ENGINE_VERSION, pdfUrl:`${url}/functions/v1/stimaimmobile-api/pdf/${token}` }, 201);
   }
   if (req.method === "GET" && pathname.startsWith("/pdf/")) {
@@ -146,9 +175,11 @@ async function handle(req: Request): Promise<Response> {
     const data = await readBody(req), area = region(data, false);
     const name = field(data.name,"nome",120), email = field(data.email,"email",254);
     const message = field(data.message,"messaggio",3000,false);
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new HttpError(422, "Inserisci un indirizzo email valido.");
-    await scope(tx => tx`insert into stimaimmobile.contacts(name,email,message,comune,zona,destinazione)
-      values(${name},${email},${message},${area.comune},${area.zona},${area.destinazione})`);
+    if (!isEmail(email)) throw new HttpError(422, "Inserisci un indirizzo email valido.");
+    const kind = requestKind(typeof data.kind === "string" ? data.kind : "", Boolean(area.comune || area.zona || area.destinazione));
+    await scope(tx => tx`insert into stimaimmobile.contacts(name,email,message,comune,zona,destinazione,kind)
+      values(${name},${email},${message},${area.comune},${area.zona},${area.destinazione},${kind})`);
+    await notifyThankYou(name, email);
     return json({ received:true }, 201);
   }
   if (route === "POST /admin/login") {
@@ -166,9 +197,24 @@ async function handle(req: Request): Promise<Response> {
     const token = req.headers.get("Authorization")?.match(/^Bearer ([^\s]+)$/i)?.[1] || "";
     const userId = await requireAdmin(token);
     if (route === "GET /admin/contacts") {
-      const contacts = await scope(tx => tx`select id,created_at,name,email,message,comune,zona,destinazione
-        from stimaimmobile.contacts order by created_at desc limit 100`);
+      const contacts = await scope(tx => tx`select id,created_at,updated_at,name,email,message,comune,zona,destinazione,kind,status,notes
+        from stimaimmobile.contacts order by created_at desc limit 200`);
       return json({ contacts });
+    }
+    if (route === "POST /admin/contact") {
+      const data = await readBody(req);
+      const id = field(data.id, "richiesta", 36);
+      if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(id))
+        throw new HttpError(422, "Richiesta non valida.");
+      const status = field(data.status, "stato", 32);
+      if (STATUSES.indexOf(status) < 0) throw new HttpError(422, "Stato non valido.");
+      const notes = field(data.notes, "note", 4000, false);
+      const [contact] = await scope(tx => tx`update stimaimmobile.contacts
+        set status=${status}, notes=${notes}, updated_at=now()
+        where id=${id}::uuid
+        returning id,created_at,updated_at,name,email,message,comune,zona,destinazione,kind,status,notes`);
+      if (!contact) throw new HttpError(404, "Richiesta non trovata.");
+      return json({ contact });
     }
     if (route === "POST /admin/preview" || route === "POST /admin/publish") {
       const { csv } = await readBody(req, 4 * 1024 * 1024);

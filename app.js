@@ -10,6 +10,7 @@ const titles = {home:'Valutazione immobiliare online', metodo:'Metodo', zone:'Zo
 let zones = [], zonesPending, zonesLoaded = false;
 let questions = [], answers = {}, step = 0, wizard = false, result, checking = false;
 let place = {comune:'', zona:'', destinazione:''};
+let recapiti = {name:'', email:''};
 let renderId = 0;
 titles.indirizzo = 'Cerca per indirizzo';
 titles.comune = 'Inserisci il comune';
@@ -52,7 +53,7 @@ function go(name) {
 }
 function focusPage(){document.querySelector('#main').focus({preventScroll:true});window.scrollTo(0,0)}
 function resetEstimate(city=''){
-  place={comune:city,zona:'',destinazione:''}; answers={}; wizard=false; step=0; result=null; checking=false;
+  place={comune:city,zona:'',destinazione:''}; recapiti={name:'',email:''}; answers={}; wizard=false; step=0; result=null; checking=false;
 }
 function startExcelExample(){
   resetEstimate(EXAMPLE_PLACE.comune);
@@ -82,7 +83,8 @@ function contactForm(manual=false) {
     field('c-name','Nome','<input id="c-name" class="input" name="name" autocomplete="name" required maxlength="120">')+
     field('c-mail','Email','<input id="c-mail" class="input" type="email" name="email" autocomplete="email" required maxlength="254">')+
     field('c-msg','Messaggio','<textarea id="c-msg" name="message" maxlength="2000" required>'+ (manual?'Vorrei una valutazione manuale del mio immobile.':'')+'</textarea>',true)+
-    '</div><p class="muted small">Useremo questi recapiti per rispondere alla tua richiesta.</p>'+errorBox()+'<div class="form-actions"><button class="btn" type="submit">Invia richiesta</button></div></form>';
+    '<input type="hidden" name="kind" value="'+(manual?'coverage':'contact')+'">'+
+    '</div><p class="muted small">Useremo questi recapiti per ricontattarti. Ti invieremo anche una conferma all’email indicata.</p>'+errorBox()+'<div class="form-actions"><button class="btn" type="submit">Invia richiesta</button></div></form>';
 }
 function bindContact(){
   const form=document.querySelector('#contact-form');
@@ -91,7 +93,7 @@ function bindContact(){
     const data=Object.fromEntries(new FormData(form));
     try{
       await request('/api/contact',{comune:'',zona:'',destinazione:'',...data});
-      form.innerHTML='<div role="status" tabindex="-1"><h2>Richiesta ricevuta</h2><p>Ti risponderemo all’indirizzo email che hai indicato.</p></div><a class="text-link" href="#home">Torna alla home</a>';form.querySelector('[role=status]').focus();
+      form.innerHTML='<div role="status" tabindex="-1"><h2>Richiesta ricevuta</h2><p>Ti abbiamo inviato una conferma all’indirizzo indicato. Ti ricontatteremo.</p></div><a class="text-link" href="#home">Torna alla home</a>';form.querySelector('[role=status]').focus();
     }catch(err){form.querySelector('.error').textContent=err.message;btn.disabled=false}
   });
 }
@@ -236,14 +238,25 @@ function questionPage(){
       }
     });
   }
-  document.querySelector('#back').addEventListener('click',()=>{if(step){step--;questionPage()}else{wizard=false;locationPage()}focusPage()});
+  if(step===groups.length-1){
+    container.insertAdjacentHTML('beforeend',field('q-name','Nome (facoltativo)','<input id="q-name" class="input" autocomplete="name" maxlength="120" value="'+esc(recapiti.name)+'">')+
+      field('q-mail','Email (facoltativo)','<input id="q-mail" class="input" type="email" autocomplete="email" maxlength="254" value="'+esc(recapiti.email)+'">'));
+    container.insertAdjacentHTML('beforeend','<p class="muted small full">Se lasci l’email, ti scriviamo per confermare che abbiamo ricevuto i recapiti e ti ricontatteremo.</p>');
+  }
+  document.querySelector('#back').addEventListener('click',()=>{
+    recapiti.name=form.querySelector('#q-name')?.value.trim()||recapiti.name;
+    recapiti.email=form.querySelector('#q-mail')?.value.trim()||recapiti.email;
+    if(step){step--;questionPage()}else{wizard=false;locationPage()}focusPage()
+  });
   form.addEventListener('submit',async e=>{
     e.preventDefault();
+    recapiti.name=form.querySelector('#q-name')?.value.trim()||recapiti.name;
+    recapiti.email=form.querySelector('#q-mail')?.value.trim()||recapiti.email;
     if(step<groups.length-1){step++;questionPage();focusPage();return}
     const id=renderId,status=form.querySelector('.error'),buttons=form.querySelectorAll('button');
     status.textContent='';buttons.forEach(b=>b.disabled=true);
     const inputs=Object.fromEntries(questions.filter(q=>visible(q)&&answers[q.id]!==undefined&&answers[q.id]!=='').map(q=>[q.id,answers[q.id]]));
-    try{const next=await request('/api/estimate',{...place,inputs});if(id===renderId){result=next;go('risultato')}}
+    try{const next=await request('/api/estimate',{...place,inputs,name:recapiti.name,email:recapiti.email});if(id===renderId){result=next;go('risultato')}}
     catch(err){status.textContent=err.message}finally{buttons.forEach(b=>b.disabled=false)}
   });
 }
@@ -254,9 +267,26 @@ function resultPage(){
     (warnings.length?'<div class="notice"><strong>Limiti della stima</strong><ul>'+warnings.map(w=>'<li>'+esc(w)+'</li>').join('')+'</ul></div>':'')+
     '<dl class="metrics"><div><dt>Minimo indicativo</dt><dd>'+money.format(result.minimum)+'</dd></div><div><dt>Prezzo al m²</dt><dd>'+money.format(result.rate)+'</dd></div><div><dt>Superficie commerciale</dt><dd>'+number.format(result.surface)+' m²</dd></div></dl>'+
     '<h3>Fattori con maggiore incidenza</h3>'+(result.factors?.length?'<ul class="factor-list">'+[...result.factors].sort((a,b)=>Math.abs(b.value)-Math.abs(a.value)).slice(0,5).map(f=>'<li><span>'+esc(f.label)+'</span><strong>'+(f.value>0?'+':'')+number.format(f.value)+'%</strong></li>').join('')+'</ul>':'<p class="muted">Nessun correttivo rilevato.</p>')+
-    '<div class="form-actions"><a id="pdf" class="btn">'+icon('download')+'Scarica il PDF</a><a class="btn secondary" href="#contatti">Richiedi un contatto</a></div></article><button id="new-estimate" class="btn secondary">Valuta un altro immobile</button>';
+    '<div class="form-actions"><a id="pdf" class="btn">'+icon('download')+'Scarica il PDF</a>'+(result.contactReceived||recapiti.email?'':'<a class="btn secondary" href="#contatti">Richiedi un contatto</a>')+'</div></article>'+
+    (result.contactReceived||recapiti.email
+      ? '<p class="notice">Ti abbiamo inviato una conferma'+(recapiti.email?' a '+esc(recapiti.email):'')+'. Ti ricontatteremo.</p>'
+      : '<form id="result-contact" class="panel"><h2>Vuoi essere ricontattato?</h2><p class="muted">Lascia nome ed email: ti scriviamo per confermare che abbiamo ricevuto i recapiti.</p><div class="form-grid">'+
+        field('r-name','Nome','<input id="r-name" class="input" name="name" autocomplete="name" required maxlength="120">')+
+        field('r-mail','Email','<input id="r-mail" class="input" type="email" name="email" autocomplete="email" required maxlength="254">')+
+        '</div>'+errorBox()+'<div class="form-actions"><button class="btn" type="submit">Invia recapiti</button></div></form>')+
+    '<button id="new-estimate" class="btn secondary">Valuta un altro immobile</button>';
   const pdf=document.querySelector('#pdf');pdf.href=publicUrl(result.pdfUrl);pdf.rel='noopener';pdf.target='_blank';
   document.querySelector('#new-estimate').addEventListener('click',()=>{resetEstimate();go('valutazione')});
+  const follow=document.querySelector('#result-contact');
+  follow?.addEventListener('submit',async e=>{
+    e.preventDefault();const btn=follow.querySelector('button');btn.disabled=true;
+    const data=Object.fromEntries(new FormData(follow));
+    try{
+      const summary='Stima indicativa '+money.format(result.value)+' (minimo '+money.format(result.minimum)+'), superficie '+number.format(result.surface)+' m².';
+      await request('/api/contact',{kind:'estimate',...place,...data,message:summary});
+      recapiti={name:data.name,email:data.email};result.contactReceived=true;resultPage();
+    }catch(err){follow.querySelector('.error').textContent=err.message;btn.disabled=false}
+  });
 }
 async function render(){
   cancelSearch?.();
