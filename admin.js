@@ -6,6 +6,9 @@ let token = '';
 let reviewed = '';
 let reviewVersion = 0;
 let contacts = [];
+let modelFields = [];
+let editingIndex = -1;
+const CONTROL = { select: 'Tendina', yesno: 'Sì / No', count: 'Conteggio 0–N', number: 'Numero' };
 
 function notify(message) { el('status').textContent = message; }
 function clearPreview() {
@@ -17,12 +20,16 @@ function clearPreview() {
 function signOut() {
   token = '';
   contacts = [];
+  modelFields = [];
+  editingIndex = -1;
   el('login').reset();
   el('load').reset();
   clearPreview();
   el('contacts').replaceChildren();
   el('issues').replaceChildren();
   el('rows').replaceChildren();
+  el('field-rows').replaceChildren();
+  el('field-editor').hidden = true;
   el('access').hidden = false;
   el('management').hidden = true;
 }
@@ -137,7 +144,7 @@ el('login').onsubmit = async (event) => {
     el('access').hidden = true;
     el('management').hidden = false;
     notify('');
-    await Promise.all([loadContacts(), loadOmi()]);
+    await Promise.all([loadContacts(), loadOmi(), loadFields()]);
   } catch (error) { notify(error.message); }
   finally { button.disabled = false; }
 };
@@ -166,6 +173,236 @@ el('load').onsubmit = async (event) => {
     if (!data.errors.length && data.total > 0) { reviewed = csv; el('publish').disabled = false; }
     notify(reviewed ? 'Il listino è pronto per la pubblicazione.' : 'Correggi il file e ripeti la verifica.');
   } catch (error) { if (version === reviewVersion) notify(error.message); }
+};
+function blankField() {
+  return {
+    id: 'campo', label: 'Nuovo campo', group: 'Edificio', type: 'select', _new: true,
+    required: false, active: true, partial: false, min: null, max: null, step: null, fallback: null,
+    whenFieldId: null, whenValues: [],
+    options: [
+      { value: 'Sì', label: 'Sì', coefficient: 0, scored: true, public: true, aliases: [] },
+      { value: 'No', label: 'No', coefficient: 0, scored: true, public: true, aliases: [] }
+    ]
+  };
+}
+function uniqueId(base) {
+  const used = new Set(modelFields.map(item => item.id));
+  if (!used.has(base)) return base;
+  let n = 2;
+  while (used.has(base + n)) n++;
+  return base + n;
+}
+function renderGroups() {
+  el('field-groups').replaceChildren(...[...new Set(modelFields.map(item => item.group))].map(name => option(name, name)));
+}
+function renderFields() {
+  const body = el('field-rows');
+  body.replaceChildren();
+  modelFields.forEach((field, index) => {
+    const tr = document.createElement('tr');
+    if (index === editingIndex) tr.className = 'selected';
+    const condition = field.whenFieldId ? 'se ' + field.whenFieldId : 'sempre';
+    for (const value of [String(index + 1), field.label, field.group, CONTROL[field.type] || field.type, condition]) tr.append(node('td', value));
+    const actions = document.createElement('td');
+    actions.className = 'row-actions';
+    const edit = node('button', 'Modifica');
+    edit.type = 'button';
+    edit.className = 'outline';
+    edit.onclick = () => openEditor(index);
+    const up = node('button', 'Su');
+    up.type = 'button';
+    up.className = 'outline';
+    up.disabled = index === 0;
+    up.onclick = () => { const [item] = modelFields.splice(index, 1); modelFields.splice(index - 1, 0, item); if (editingIndex === index) editingIndex = index - 1; else if (editingIndex === index - 1) editingIndex = index; renderFields(); };
+    const down = node('button', 'Giù');
+    down.type = 'button';
+    down.className = 'outline';
+    down.disabled = index === modelFields.length - 1;
+    down.onclick = () => { const [item] = modelFields.splice(index, 1); modelFields.splice(index + 1, 0, item); if (editingIndex === index) editingIndex = index + 1; else if (editingIndex === index + 1) editingIndex = index; renderFields(); };
+    const remove = node('button', 'Elimina');
+    remove.type = 'button';
+    remove.className = 'outline danger';
+    remove.onclick = () => {
+      if (!confirm('Eliminare il campo «' + field.label + '» dal modello locale? Ricorda di salvare.')) return;
+      modelFields.splice(index, 1);
+      if (editingIndex === index) { editingIndex = -1; el('field-editor').hidden = true; }
+      else if (editingIndex > index) editingIndex--;
+      renderFields();
+    };
+    actions.append(edit, up, down, remove);
+    tr.append(actions);
+    body.append(tr);
+  });
+  renderGroups();
+}
+function optionRow(optionData = {}) {
+  const tr = document.createElement('tr');
+  const value = document.createElement('input');
+  value.name = 'opt-value';
+  value.required = true;
+  value.maxLength = 180;
+  value.value = optionData.value || '';
+  const label = document.createElement('input');
+  label.name = 'opt-label';
+  label.maxLength = 180;
+  label.value = optionData.label || optionData.value || '';
+  const coefficient = document.createElement('input');
+  coefficient.name = 'opt-coefficient';
+  coefficient.inputMode = 'decimal';
+  coefficient.value = optionData.coefficient ?? 0;
+  const scored = document.createElement('input');
+  scored.type = 'checkbox';
+  scored.name = 'opt-scored';
+  scored.checked = optionData.scored !== false;
+  const visible = document.createElement('input');
+  visible.type = 'checkbox';
+  visible.name = 'opt-public';
+  visible.checked = optionData.public !== false;
+  const aliases = document.createElement('input');
+  aliases.name = 'opt-aliases';
+  aliases.placeholder = 'alias, separati da virgola';
+  aliases.value = (optionData.aliases || []).join(', ');
+  const remove = node('button', '×');
+  remove.type = 'button';
+  remove.className = 'outline';
+  remove.onclick = () => tr.remove();
+  for (const control of [value, label, coefficient, scored, visible, aliases, remove]) {
+    const td = document.createElement('td');
+    td.append(control);
+    tr.append(td);
+  }
+  return tr;
+}
+function readOptions() {
+  return [...el('option-rows').rows].map(row => {
+    const value = row.querySelector('[name=opt-value]').value.trim();
+    const label = row.querySelector('[name=opt-label]').value.trim() || value;
+    return {
+      value, label,
+      coefficient: Number(String(row.querySelector('[name=opt-coefficient]').value).replace(',', '.')) || 0,
+      scored: row.querySelector('[name=opt-scored]').checked,
+      public: row.querySelector('[name=opt-public]').checked,
+      aliases: row.querySelector('[name=opt-aliases]').value.split(',').map(item => item.trim()).filter(Boolean)
+    };
+  }).filter(option => option.value);
+}
+function fillWhenFields(selected) {
+  const select = el('field-form').elements.whenFieldId;
+  const current = modelFields[editingIndex];
+  select.replaceChildren(option('', 'Sempre visibile', !selected));
+  for (const field of modelFields) {
+    if (field.id === current?.id) continue;
+    select.append(option(field.id, field.label + ' (' + field.id + ')', field.id === selected));
+  }
+}
+function openEditor(index) {
+  editingIndex = index;
+  const field = modelFields[index];
+  const form = el('field-form');
+  el('field-editor-title').textContent = 'Modifica: ' + field.label;
+  form.elements.id.value = field.id;
+  form.elements.id.readOnly = !field._new;
+  form.label.value = field.label || '';
+  form.group.value = field.group || '';
+  form.type.value = field.type || 'select';
+  form.required.checked = Boolean(field.required);
+  form.active.checked = field.active !== false;
+  form.partial.checked = Boolean(field.partial);
+  form.min.value = field.min ?? '';
+  form.max.value = field.max ?? '';
+  form.step.value = field.step ?? '';
+  form.fallback.value = field.fallback ?? '';
+  form.whenValues.value = (field.whenValues || []).join('\n');
+  fillWhenFields(field.whenFieldId);
+  el('option-rows').replaceChildren(...(field.options || []).map(optionRow));
+  el('field-editor').hidden = false;
+  renderFields();
+  form.label.focus();
+}
+function collectField() {
+  const form = el('field-form');
+  const min = form.min.value.trim();
+  const max = form.max.value.trim();
+  const step = form.step.value.trim();
+  const fallback = form.fallback.value.trim();
+  return {
+    id: form.elements.id.value.trim(),
+    label: form.label.value.trim(),
+    group: form.group.value.trim(),
+    type: form.type.value,
+    required: form.required.checked,
+    active: form.active.checked,
+    partial: form.partial.checked,
+    min: min === '' ? null : Number(min.replace(',', '.')),
+    max: max === '' ? null : Number(max.replace(',', '.')),
+    step: step === '' ? null : Number(step.replace(',', '.')),
+    fallback: fallback === '' ? null : Number(fallback.replace(',', '.')),
+    whenFieldId: form.whenFieldId.value || null,
+    whenValues: form.whenValues.value.split(/\n/).map(item => item.trim()).filter(Boolean),
+    options: readOptions(),
+    _new: modelFields[editingIndex]?._new
+  };
+}
+async function loadFields() {
+  const session = token;
+  const data = await request('fields');
+  if (token !== session) return;
+  modelFields = Array.isArray(data.fields) ? data.fields : [];
+  editingIndex = -1;
+  el('field-editor').hidden = true;
+  renderFields();
+}
+el('field-add').onclick = () => {
+  const field = blankField();
+  field.id = uniqueId('campo');
+  modelFields.push(field);
+  openEditor(modelFields.length - 1);
+};
+el('option-add').onclick = () => el('option-rows').append(optionRow());
+el('field-cancel').onclick = () => { editingIndex = -1; el('field-editor').hidden = true; renderFields(); };
+el('field-form').onsubmit = event => {
+  event.preventDefault();
+  if (editingIndex < 0) return;
+  const field = collectField();
+  if (modelFields.some((item, index) => item.id === field.id && index !== editingIndex)) {
+    return notify('Identificativo già usato da un altro campo.');
+  }
+  modelFields[editingIndex] = field;
+  notify('Campo aggiornato nel modello locale. Ricorda di salvare i parametri.');
+  openEditor(editingIndex);
+};
+el('field-form').elements.type.addEventListener('change', () => {
+  if (el('field-form').elements.type.value !== 'yesno' || el('option-rows').rows.length) return;
+  el('option-rows').replaceChildren(optionRow({ value: 'Sì', label: 'Sì', coefficient: 0, scored: true, public: true }),
+    optionRow({ value: 'No', label: 'No', coefficient: 0, scored: true, public: true }));
+});
+el('field-save').onclick = async () => {
+  if (!el('field-editor').hidden && editingIndex >= 0) modelFields[editingIndex] = collectField();
+  el('field-save').disabled = true;
+  notify('Salvataggio dei parametri in corso…');
+  try {
+    const data = await request('fields', { fields: modelFields.map(({_new, ...field}) => field) });
+    modelFields = data.fields;
+    editingIndex = -1;
+    el('field-editor').hidden = true;
+    renderFields();
+    notify('Parametri pubblicati. Il questionario pubblico usa subito i nuovi coefficienti.');
+  } catch (error) { notify(error.message); }
+  finally { el('field-save').disabled = false; }
+};
+el('field-reset').onclick = async () => {
+  if (!confirm('Ripristinare i coefficienti del foglio Excel CALCOLI? Le modifiche non salvate andranno perse.')) return;
+  el('field-reset').disabled = true;
+  notify('Ripristino dei coefficienti Excel…');
+  try {
+    const data = await request('fields/reset', {});
+    modelFields = data.fields;
+    editingIndex = -1;
+    el('field-editor').hidden = true;
+    renderFields();
+    notify('Modello ripristinato dai coefficienti Excel e pubblicato.');
+  } catch (error) { notify(error.message); }
+  finally { el('field-reset').disabled = false; }
 };
 el('publish').onclick = async () => {
   if (!reviewed) return;

@@ -3,6 +3,34 @@
 <body><header><a class="brand" href="./">StimaImmobile<span>.it</span></a><span>Area amministrativa</span></header>
 <main><section id="access"><h1>Accedi all’area riservata</h1><p>Usa l’account abilitato alla gestione di StimaImmobile.</p><form id="login"><label>Email<input name="email" type="email" required autocomplete="username"></label><label>Password<input name="password" type="password" required autocomplete="current-password"></label><button>Accedi</button></form></section>
 <section id="management" hidden><div class="top"><h1>Area riservata</h1><button id="logout" class="outline">Esci</button></div>
+<article><div class="top"><h2>Parametri di valutazione</h2><div class="toolbar"><button class="outline" id="field-add" type="button">Aggiungi campo</button><button class="outline" id="field-reset" type="button">Ripristina Excel</button><button id="field-save" type="button">Salva i parametri</button></div></div>
+<p class="hint">Ogni risposta è un plus o minus sulla quotazione OMI della zona (punto medio min/max del semestre in listino). Formula: superficie × €/m² × (1 + somma coefficienti / 100). Le modifiche valgono dal salvataggio, senza un nuovo deploy.</p>
+<div class="scroll"><table><thead><tr><th>Ordine</th><th>Campo</th><th>Gruppo</th><th>Controllo</th><th>Visibilità</th><th></th></tr></thead><tbody id="field-rows"></tbody></table></div>
+<section id="field-editor" hidden>
+  <h3 id="field-editor-title">Modifica campo</h3>
+  <form id="field-form" class="editor">
+    <label>Identificativo<input name="id" required maxlength="64" pattern="[a-z][A-Za-z0-9]{0,63}"></label>
+    <label>Etichetta<input name="label" required maxlength="180"></label>
+    <label>Gruppo<input name="group" required maxlength="80" list="field-groups"></label>
+    <label>Tipo di controllo<select name="type"><option value="select">Tendina</option><option value="yesno">Sì / No</option><option value="count">Conteggio 0–N</option><option value="number">Numero (superficie)</option></select></label>
+    <label class="check"><input name="required" type="checkbox"> Obbligatorio</label>
+    <label class="check"><input name="active" type="checkbox"> Visibile nel questionario</label>
+    <label class="check"><input name="partial" type="checkbox"> Stima parziale se manca il coefficiente</label>
+    <label>Minimo<input name="min" inputmode="decimal"></label>
+    <label>Massimo<input name="max" inputmode="decimal"></label>
+    <label>Passo<input name="step" inputmode="decimal"></label>
+    <label>Fallback (punti %)<input name="fallback" inputmode="decimal"></label>
+    <label>Visibile solo se il campo<select name="whenFieldId"><option value="">Sempre visibile</option></select></label>
+    <label>Valori che lo mostrano (uno per riga)<textarea name="whenValues" rows="3" maxlength="800"></textarea></label>
+    <div class="full"><div class="top"><h4>Opzioni e coefficienti</h4><button class="outline" id="option-add" type="button">Aggiungi opzione</button></div>
+      <p class="hint">Il coefficiente è in punti percentuali sulla base OMI. Deseleziona «attivo» per un’opzione senza mappa (come piano diverso da rialzato).</p>
+      <div class="scroll"><table><thead><tr><th>Valore</th><th>Etichetta</th><th>Punti %</th><th>Attivo</th><th>Pubblica</th><th>Alias</th><th></th></tr></thead><tbody id="option-rows"></tbody></table></div>
+    </div>
+    <div class="form-actions"><button type="submit">Applica al modello</button><button class="outline" id="field-cancel" type="button">Chiudi</button></div>
+  </form>
+</section>
+<datalist id="field-groups"></datalist>
+</article>
 <article><div class="top"><h2>Richieste</h2><div class="toolbar"><label>Stato<select id="filter-status"><option value="">Tutte</option><option value="new">Nuove</option><option value="contacted">Contattate</option><option value="closed">Chiuse</option></select></label><button class="outline" id="refresh" type="button">Aggiorna</button></div></div>
 <p class="hint">Stime con recapiti, messaggi di contatto e richieste di copertura. Puoi aggiornare stato e note.</p>
 <div id="contacts"></div></article>

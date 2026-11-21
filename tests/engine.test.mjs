@@ -27,7 +27,7 @@ test('unavailable floor and year formulas are identified on partial estimates', 
 test('piano and anno selects follow the PHP options without inventing missing maps', () => {
   const floor = questions.find(q => q.id === 'floor');
   const year = questions.find(q => q.id === 'year');
-  assert.equal(ENGINE_VERSION, 'xls-1.1.0');
+  assert.equal(ENGINE_VERSION, 'omi-xls-2.0.0');
   assert.equal(floor.type, 'select');
   assert.deepEqual(floor.options.slice(0, 4), ['rialzato', 'interrato', 'terra', '1']);
   assert.ok(floor.options.includes('50'));
@@ -94,9 +94,13 @@ test('public question identifiers are unique and score metadata stays on the ser
   for (const q of questions) {
     assert.ok(!Object.hasOwn(q, 'scores'));
     assert.ok(!Object.hasOwn(q, 'aliases'));
-    if (q.type === 'select') assert.ok(q.options.length > 0);
+    assert.notEqual(q.type, 'text');
+    if (q.type === 'select' || q.type === 'yesno' || q.type === 'count') assert.ok(q.options.length > 0);
     if (q.when) assert.ok(questions.some(item => item.id === q.when.id));
   }
+  assert.equal(questions.find(q => q.id === 'surface').type, 'number');
+  assert.equal(questions.find(q => q.id === 'elevator').type, 'yesno');
+  assert.ok(questions.find(q => q.id === 'bedrooms').options.includes('0'));
 });
 
 test('PDF bytes include the saved estimate, source, dates and qualifications', () => {
