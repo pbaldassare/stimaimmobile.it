@@ -30,11 +30,15 @@ Il file `data/listino-esempio-excel.csv` pubblica la quotazione d’esempio del 
 STIMAIMMOBILE_ADMIN_EMAIL='…' STIMAIMMOBILE_ADMIN_PASSWORD='…' npm run publish:listino
 ```
 
-Il comando sostituisce l’intero listino con quel CSV. L’API accetta anche il refuso Excel `Cenro storico` come alias di `Centro storico`.
+Il comando pubblica quel CSV come listino operatore e lascia le quotazioni OMI, salvo chiavi identiche. L’API accetta anche il refuso Excel `Cenro storico` come alias di `Centro storico`.
 
 Salva in UTF-8. Sono ammessi il punto e virgola e la virgola come delimitatori. Con valori decimali separati da virgola, usa il punto e virgola come delimitatore oppure racchiudi il numero tra virgolette. Carica dal pannello un file fino a 1 MiB e controlla le prime 30 righe in anteprima. L’intero file deve superare i controlli per la pubblicazione. L’API accetta fino a 10.000 quotazioni e 4 MiB di richiesta JSON, restituendo fino a 100 righe di anteprima.
 
-Ogni pubblicazione sostituisce l’intero listino in una transazione. Prepara un file completo anche per gli aggiornamenti. Ogni relazione emessa conserva quotazione, fonte, data e risultati utilizzati. Una zona diventa visibile nel sito dopo la pubblicazione.
+La pubblicazione da CSV sostituisce le quotazioni dell’operatore e lascia le righe con fonte `Agenzia delle Entrate – OMI`, salvo chiavi identiche nel file. Ogni relazione emessa conserva quotazione, fonte, data e risultati utilizzati.
+
+## Quotazioni OMI
+
+Le tabelle `stimaimmobile.omi_zones` e `stimaimmobile.omi_quotes` conservano i CSV pubblici rielaborati da ondata (UTF-8, cartella `data/`), con semestre, comune, zona, tipologia, stato, min/max di compravendita e locazione se presente. Fonte: **«Agenzia delle Entrate – OMI»**, licenza CC-BY 4.0. ondata è un redistributore; il download ufficiale è Forniture OMI. I CSV non vanno in git. In produzione postgres li scarica da GitHub (`stimaimmobile.omi_fetch_csv` + `omi_ingest_cached_range`); in locale `npm run import:omi` prepara lotti JSON. Poi `select stimaimmobile.publish_omi_rates()` scrive nel listino il semestre più recente usando il punto medio min/max, senza toccare l’esempio Excel Brescia · Centro storico · Direzionale. `GET /zones` elenca i comuni; `GET /zones?comune=` e `GET /zones?q=` restituiscono le combinazioni. L’area riservata mostra i conteggi su `GET /admin/omi`.
 
 ## Distribuzione
 
@@ -42,4 +46,4 @@ La migrazione versionata in `supabase/migrations` è già applicata al progetto 
 
 Quando un visitatore lascia un’email (contatto, copertura o stima), la funzione invia un ringraziamento con Resend. La chiave si legge, in quest’ordine, dal Vault `stimaimmobile_resend` tramite `stimaimmobile.resend_api_key()` e, se assente, dalla variabile d’ambiente della funzione `RESEND_API_KEY`. In un progetto Supabase condiviso non sostituire il segreto Edge Function `RESEND_API_KEY` delle altre applicazioni: aggiornare solo il Vault di StimaImmobile. Il valore non va nel repository, nel client o nelle Pages. Mittente: `StimaImmobile.it <noreply@sonyc.it>` (dominio Resend verificato). Se la chiave manca, la richiesta viene comunque salvata.
 
-Per verificare il servizio, la richiesta `GET /functions/v1/stimaimmobile-api/zones` restituisce le combinazioni pubblicate. Un elenco vuoto è previsto fino al primo listino. `GET /functions/v1/stimaimmobile-api/admin/contacts` richiede l’accesso amministrativo. Stato e note delle richieste si aggiornano con `POST /functions/v1/stimaimmobile-api/admin/contact`.
+Per verificare il servizio, la richiesta `GET /functions/v1/stimaimmobile-api/zones` restituisce i comuni coperti. `GET /zones?comune=Brescia` elenca zona e destinazione. Un elenco vuoto è previsto fino al primo listino. `GET /functions/v1/stimaimmobile-api/admin/contacts` richiede l’accesso amministrativo. Stato e note delle richieste si aggiornano con `POST /functions/v1/stimaimmobile-api/admin/contact`.

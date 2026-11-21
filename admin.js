@@ -101,6 +101,18 @@ function renderContacts() {
     target.append(form);
   }
 }
+async function loadOmi() {
+  const session = token;
+  const data = await request('omi').catch(() => null);
+  if (token !== session || !data) return;
+  const stats = el('omi-stats');
+  if (!stats) return;
+  const latest = data.latest ? ' semestre ' + data.latest : '';
+  stats.textContent = 'Archivio OMI: ' + (data.zones ?? 0) + ' zone, ' + (data.quotes ?? 0) + ' quotazioni' + latest +
+    '. Listino sito: ' + (data.rates ?? 0) + ' righe OMI e ' + (data.other_rates ?? 0) +
+    ' righe di altra fonte. Fonte: ' + (data.fonte || 'Agenzia delle Entrate – OMI') +
+    ' (' + (data.license || 'CC-BY 4.0') + '). ondata redistribuisce i CSV; il download ufficiale è Forniture OMI.';
+}
 async function loadContacts() {
   const session = token;
   const data = await request('contacts');
@@ -125,7 +137,7 @@ el('login').onsubmit = async (event) => {
     el('access').hidden = true;
     el('management').hidden = false;
     notify('');
-    await loadContacts();
+    await Promise.all([loadContacts(), loadOmi()]);
   } catch (error) { notify(error.message); }
   finally { button.disabled = false; }
 };

@@ -11,7 +11,11 @@ Con Node.js 22 o successivo, eseguire `npm test`, `npm run build` e `npm run dev
 1. Abilitare l’operatore seguendo le istruzioni nella directory `supabase`.
 2. Aprire l’**Area riservata** dal sito e accedere. Scaricare il modello CSV, oppure usare `data/listino-esempio-excel.csv` (Brescia · Centro storico · Direzionale a 1450 €/m², fonte «esempio Excel CALCOLI B80», data 2014-04-04). Il refuso Excel «Cenro storico» è accettato come alias.
 3. Inserire una riga per combinazione di comune, zona e destinazione d’uso. Indicare un prezzo positivo in euro al metro quadro, la fonte e la data di riferimento in formato `AAAA-MM-GG`.
-4. Verificare l’anteprima e scegliere **Pubblica e sostituisci il listino**, oppure da un account abilitato eseguire `npm run publish:listino`. Le zone acquistano copertura alla pubblicazione. Le relazioni già emesse utilizzano la propria copia dei dati.
+4. Verificare l’anteprima e scegliere **Pubblica e sostituisci il listino**, oppure da un account abilitato eseguire `npm run publish:listino`. Un CSV dell’operatore non cancella le quotazioni OMI, salvo chiavi identiche. Le relazioni già emesse utilizzano la propria copia dei dati.
+
+## Quotazioni OMI
+
+Il listino nazionale deriva dalle quotazioni semestrali dell’Osservatorio del Mercato Immobiliare. Fonte da citare: **«Agenzia delle Entrate – OMI»** (licenza [CC-BY 4.0](https://creativecommons.org/licenses/by/4.0/)). I CSV nel repository GitHub [ondata/quotazioni-immobiliari-agenzia-entrate](https://github.com/ondata/quotazioni-immobiliari-agenzia-entrate) (`data/`, file UTF-8 rielaborati) sono un redistributore di comodo: il download ufficiale resta [Forniture OMI](https://www.agenziaentrate.gov.it/portale/schede/fabbricatiterreni/omi/forniture-dati-omi). Il repository non contiene i CSV grezzi; `npm run import:omi -- --dir data/omi --batch-dir /tmp/omi-batches` li scarica e li carica in `stimaimmobile.omi_zones` e `omi_quotes`. Il semestre più recente alimenta `stimaimmobile.rates` con il punto medio dell’intervallo min/max di compravendita, senza cancellare l’esempio Excel di Brescia. Le quotazioni OMI sono indicazioni di larga massima, non una perizia.
 
 Nel pannello amministrativo si consultano e si aggiornano le richieste (stime con recapiti, contatti, copertura mancante). Stato: nuova, contattata, chiusa, con note interne. Chi lascia un’email riceve una conferma automatica. Per scaricare il PDF di una stima basta il suo link personale.
 

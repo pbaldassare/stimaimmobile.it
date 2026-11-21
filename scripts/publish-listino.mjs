@@ -35,4 +35,4 @@ async function post(path, body, token) {
 
 const session = await post('admin/login', { email, password });
 const { published } = await post('admin/publish', { csv }, session.access_token);
-console.log('Listino pubblicato da ' + csvPath + '. Quotazioni attive: ' + published + '.');
+console.log('Listino operatore pubblicato da ' + csvPath + '. Righe nel CSV: ' + published + '. Le quotazioni OMI restano in listino se non sovrascritte.');

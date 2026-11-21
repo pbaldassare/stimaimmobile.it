@@ -6,7 +6,11 @@
 <article><div class="top"><h2>Richieste</h2><div class="toolbar"><label>Stato<select id="filter-status"><option value="">Tutte</option><option value="new">Nuove</option><option value="contacted">Contattate</option><option value="closed">Chiuse</option></select></label><button class="outline" id="refresh" type="button">Aggiorna</button></div></div>
 <p class="hint">Stime con recapiti, messaggi di contatto e richieste di copertura. Puoi aggiornare stato e note.</p>
 <div id="contacts"></div></article>
-<article><h2>Importa le quotazioni</h2><p>Il nuovo listino sostituisce quello in uso. Le valutazioni già emesse conservano la quotazione originale.</p><a href="./modello-listino.csv" download>Scarica il modello CSV</a>
+<article id="omi-source"><h2>Fonte OMI</h2>
+<p id="omi-stats">Le quotazioni nazionali restano in <code>omi_zones</code> e <code>omi_quotes</code>. Il listino pubblico usa il semestre OMI più recente, con fonte «Agenzia delle Entrate – OMI» (CC-BY 4.0). ondata è solo un redistributore di comodo; il download ufficiale è Forniture OMI dell’Agenzia delle Entrate. Un CSV di aggiornamento non cancella le righe OMI, salvo chiavi identiche nel file.</p>
+<p class="hint">L’esempio Excel Brescia · Centro storico · Direzionale resta in listino se la chiave non è sovrascritta.</p>
+</article>
+<article><h2>Importa le quotazioni</h2><p>Il CSV dell’operatore sostituisce le quotazioni non OMI. Le valutazioni già emesse conservano la quotazione originale.</p><a href="./modello-listino.csv" download>Scarica il modello CSV</a>
 · <a href="./listino-esempio-excel.csv" download>Esempio Excel (Brescia)</a>
 <form id="load"><label>File CSV in formato UTF-8<input name="list" type="file" accept=".csv,text/csv" required></label><button>Verifica anteprima</button></form>
 <section id="review" hidden><h3>Anteprima del listino</h3><p id="summary"></p><ul id="issues"></ul><div class="scroll"><table><thead><tr><th>Comune</th><th>Zona</th><th>Destinazione</th><th>€/m²</th><th>Fonte</th><th>Data</th></tr></thead><tbody id="rows"></tbody></table></div><button id="publish" disabled>Pubblica e sostituisci il listino</button></section></article></section>
