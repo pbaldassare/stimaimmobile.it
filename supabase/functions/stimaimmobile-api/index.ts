@@ -2,6 +2,7 @@ import postgres from "npm:postgres@3.4.7";
 import { calculate, normalizeInputs, questions, ENGINE_VERSION } from "../../../engine/valuation.mjs";
 import { makePdf } from "../../../engine/pdf.mjs";
 import { previewCatalog } from "./catalog.mjs";
+import { addressCandidates } from "./geocoding.mjs";
 
 const cors = {
   "Access-Control-Allow-Origin": "*",
@@ -83,6 +84,24 @@ async function handle(req: Request): Promise<Response> {
   const pathname = new URL(req.url).pathname.split("/stimaimmobile-api").at(-1) || "/";
   const route = req.method + " " + pathname;
   if (route === "GET /questions") return json({ questions });
+  if (route === "POST /address") {
+    const data = await readBody(req, 2048);
+    const address = field(data.address, "indirizzo", 220);
+    if (address.length < 5) throw new HttpError(422, "Inserisci via e comune.");
+    const [slot] = await scope(tx => tx`select stimaimmobile.reserve_maps_request() as credential`);
+    if (!slot?.credential) throw new HttpError(429, "Ricerca indirizzo indisponibile. Puoi inserire il comune a mano.");
+    const search = new URL("https://maps.googleapis.com/maps/api/geocode/json");
+    search.search = new URLSearchParams({ address, language:"it", components:"country:IT", key:slot.credential }).toString();
+    const upstream = await fetch(search, {signal:AbortSignal.timeout(7000), redirect:"error"});
+    if (!upstream.ok) throw new HttpError(503, "Google Maps non disponibile. Puoi inserire il comune a mano.");
+    const geo = await upstream.json();
+    if (geo.status === "ZERO_RESULTS") return json({ addresses:[] });
+    if (geo.status !== "OK") {
+      console.warn("Geocoding status", String(geo.status).slice(0,32));
+      throw new HttpError(503, "Ricerca indirizzo non disponibile. Puoi inserire il comune a mano.");
+    }
+    return json({ addresses:addressCandidates(geo.results) });
+  }
   if (route === "GET /zones") {
     const zones = await scope(tx => tx`select comune,zona,destinazione from stimaimmobile.rates order by comune,zona,destinazione`);
     return json({ zones });

@@ -1,6 +1,7 @@
 :root{color-scheme:light;--paper:#fbfbf7;--ink:#202d31;--green:#174c41;--accent:#3e7161;--muted:#576561;--line:#d8ded7;--tint:#edf3eb;--radius:6px;font-family:"Aptos","Segoe UI",Arial,sans-serif;line-height:1.5;color:var(--ink);background:var(--paper)}
 *,*::before,*::after{box-sizing:border-box}
 body{margin:0}
+.address-options{display:grid;gap:.8rem;margin-block:1rem}.address-options button{text-align:left}.maps-attribution{font:400 1rem/1.4 Arial,sans-serif;color:#5e5e5e;white-space:nowrap}#address-form label{display:block;margin-bottom:.5rem;font-weight:600}#address-results:not(:empty){margin-block:1rem}
 [hidden],.sprite{display:none!important}
 .wrap{width:min(1280px,89%);margin-inline:auto}
 a{color:inherit;text-underline-offset:.25em}

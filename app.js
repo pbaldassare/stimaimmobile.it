@@ -12,6 +12,7 @@ let zones = [], zonesPending, zonesLoaded = false;
 let questions = [], answers = {}, step = 0, wizard = false, result, checking = false;
 let place = {comune:'', zona:'', destinazione:''};
 let renderId = 0;
+titles.indirizzo = 'Cerca per indirizzo';
 
 const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const icon = name => '<svg class="ico" aria-hidden="true"><use href="#'+name+'"/></svg>';
@@ -107,11 +108,62 @@ function zonesPage(){
   }
   filter.addEventListener('input',show);show();
 }
+function addressPage(){
+  page.innerHTML = caption('Localizzazione') + '<h1>Trova il tuo immobile</h1><form id="address-form" class="panel"><label for="address-query">Via, numero civico e comune</label><input class="input" id="address-query" required minlength="5" maxlength="220" autocomplete="street-address" placeholder="Es. Piazza della Loggia 1, Brescia"><p class="small muted">Premendo Cerca, invii l’indirizzo a Google Maps. <a href="https://policies.google.com/privacy?hl=it">Privacy Google</a> · <a href="https://maps.google.com/help/terms_maps/">Termini Maps</a></p><button class="btn">Cerca indirizzo</button></form><div id="address-results" aria-live="polite"></div><a href="#valutazione" class="text-link">Inserisci il comune a mano</a>';
+  const form = document.querySelector('#address-form');
+  const output = document.querySelector('#address-results');
+  const button = form.querySelector('button');
+  form.addEventListener('submit', async event => {
+    event.preventDefault();
+    button.disabled = true;
+    output.textContent = 'Ricerca in corso…';
+    try {
+      const {addresses} = await request('/api/address', {address:form.querySelector('input').value.trim()});
+      if (!form.isConnected) return;
+      output.replaceChildren();
+      if (!addresses.length) {
+        output.textContent = 'Nessun indirizzo trovato. Aggiungi il comune o correggi il numero civico.';
+        return;
+      }
+      const box = document.createElement('section');
+      box.className = 'panel address-options';
+      const heading = document.createElement('h2');
+      heading.textContent = 'Conferma l’indirizzo';
+      box.append(heading);
+      for (const candidate of addresses) {
+        const choose = document.createElement('button');
+        choose.type = 'button';
+        choose.className = 'btn secondary';
+        choose.textContent = candidate.label;
+        choose.addEventListener('click', async () => {
+          try {
+            const rates = await loadZones();
+            if (!form.isConnected) return;
+            const local = rates.filter(row => same(row.comune, candidate.comune));
+            resetEstimate(local[0]?.comune || candidate.comune);
+            const matches = distinct(local.map(row => row.zona).filter(zone => candidate.districts.some(d => same(d, zone))));
+            if (matches.length === 1) place.zona = matches[0];
+            checking = true;
+            go('valutazione');
+          } catch (error) { output.textContent = error.message; }
+        });
+        box.append(choose);
+      }
+      const attribution = document.createElement('span');
+      attribution.className = 'maps-attribution';
+      attribution.textContent = 'Google Maps';
+      box.append(attribution);
+      output.append(box);
+    } catch (error) { output.textContent = error.message; }
+    finally { button.disabled = false; }
+  });
+}
 function locationPage(){
   const matches=zones.filter(z=>same(z.comune,place.comune));
   const known=matches.length>0;
   const unavailable=checking && place.comune && !known;
   page.innerHTML=caption('Valutazione immobiliare')+'<h1>Dove si trova l’immobile?</h1><p class="page-description">Individua la quotazione per comune, zona e destinazione d’uso.</p>';
+  page.insertAdjacentHTML('beforeend','<a class="text-link" href="#indirizzo">Trova comune e zona dall’indirizzo</a>');
   if(unavailable || !zones.length){
     page.insertAdjacentHTML('beforeend','<p class="notice">'+(!zones.length?'Il primo listino è in preparazione.':'Per '+esc(place.comune)+' il listino non contiene ancora una quotazione.')+' Puoi richiedere una valutazione manuale.</p>'+contactForm(true)+(zones.length?'<button id="another" class="btn secondary">Cerca un altro comune</button>':''));
     bindContact();document.querySelector('#another')?.addEventListener('click',()=>{resetEstimate();locationPage()});return;
@@ -192,6 +244,7 @@ async function render(){
   home.hidden=current!=='home';page.hidden=current==='home';focusPage();
   if(current==='home'){loadZones().catch(()=>{});return}
   if(current==='metodo'){methodPage();return}
+  if(current==='indirizzo'){addressPage();return}
   if(current==='contatti'){page.innerHTML=caption('Contatti')+'<h1>Come possiamo aiutarti?</h1>'+contactForm();bindContact();return}
   if(current==='risultato'){resultPage();return}
   page.innerHTML='<p role="status">Verifica delle quotazioni in corso…</p>';
