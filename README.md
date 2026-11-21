@@ -13,7 +13,7 @@ Con Node.js 22 o successivo, eseguire `npm test`, `npm run build` e `npm run dev
 3. Inserire una riga per combinazione di comune, zona e destinazione d’uso. Indicare un prezzo positivo in euro al metro quadro, la fonte e la data di riferimento in formato `AAAA-MM-GG`.
 4. Verificare l’anteprima e scegliere **Pubblica e sostituisci il listino**, oppure da un account abilitato eseguire `npm run publish:listino`. Le zone acquistano copertura alla pubblicazione. Le relazioni già emesse utilizzano la propria copia dei dati.
 
-Nel pannello amministrativo sono consultabili anche le richieste manuali. Un visitatore può chiedere un contatto in assenza di copertura. Per scaricare il PDF di una stima basta il suo link personale.
+Nel pannello amministrativo si consultano e si aggiornano le richieste (stime con recapiti, contatti, copertura mancante). Stato: nuova, contattata, chiusa, con note interne. Chi lascia un’email riceve una conferma automatica. Per scaricare il PDF di una stima basta il suo link personale.
 
 ## Modello
 

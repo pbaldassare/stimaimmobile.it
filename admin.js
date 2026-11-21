@@ -1,8 +1,11 @@
 import { apiFetch } from './api-client.js';
 const el = (id) => document.getElementById(id);
+const KIND = { contact: 'Contatto', coverage: 'Copertura', estimate: 'Stima' };
+const STATUS = { new: 'Nuova', contacted: 'Contattata', closed: 'Chiusa' };
 let token = '';
 let reviewed = '';
 let reviewVersion = 0;
+let contacts = [];
 
 function notify(message) { el('status').textContent = message; }
 function clearPreview() {
@@ -13,6 +16,7 @@ function clearPreview() {
 }
 function signOut() {
   token = '';
+  contacts = [];
   el('login').reset();
   el('load').reset();
   clearPreview();
@@ -26,7 +30,7 @@ async function request(path, payload) {
   const headers = {};
   if (payload !== undefined) headers['Content-Type'] = 'application/json';
   if (token) headers.Authorization = 'Bearer ' + token;
-  const response = await apiFetch('/api/admin/' + path, {method: payload === undefined ? 'GET' : 'POST', headers, body: JSON.stringify(payload)});
+  const response = await apiFetch('/api/admin/' + path, {method: payload === undefined ? 'GET' : 'POST', headers, body: payload === undefined ? undefined : JSON.stringify(payload)});
   const data = await response.json().catch(() => ({}));
   if (!response.ok) {
     if (response.status === 401 && token) signOut();
@@ -34,27 +38,77 @@ async function request(path, payload) {
   }
   return data;
 }
-function node(tag, value) {
+function node(tag, value, className) {
   const item = document.createElement(tag);
+  if (className) item.className = className;
   item.textContent = value ?? '';
   return item;
 }
-async function loadContacts() {
-  const session = token;
-  const {contacts} = await request('contacts');
-  if (token !== session) return;
+function option(value, label, selected) {
+  const item = document.createElement('option');
+  item.value = value;
+  item.textContent = label;
+  item.selected = Boolean(selected);
+  return item;
+}
+function renderContacts() {
   const target = el('contacts');
   target.replaceChildren();
-  if (!contacts.length) target.append(node('p', 'Nessuna richiesta ricevuta.'));
-  for (const contact of contacts) {
-    const card = document.createElement('div');
-    card.className = 'request';
+  const filter = el('filter-status').value;
+  const rows = contacts.filter(item => !filter || item.status === filter);
+  if (!rows.length) {
+    target.append(node('p', contacts.length ? 'Nessuna richiesta in questo stato.' : 'Nessuna richiesta ricevuta.'));
+    return;
+  }
+  for (const contact of rows) {
+    const form = document.createElement('form');
+    form.className = 'request';
     const when = new Date(contact.created_at).toLocaleString('it-IT');
-    card.append(node('strong', contact.name), node('p', contact.email + ' · ' + when),
-      node('p', [contact.comune, contact.zona, contact.destinazione].filter(Boolean).join(' · ')), node('p', contact.message));
-    target.append(card);
+    const kind = KIND[contact.kind] || 'Contatto';
+    const place = [contact.comune, contact.zona, contact.destinazione].filter(Boolean).join(' · ');
+    const head = document.createElement('div');
+    head.className = 'request-head';
+    head.append(node('span', kind, 'badge'), node('strong', contact.name || 'Senza nome'));
+    form.append(head, node('p', (contact.email || '') + ' · ' + when), node('p', place), node('p', contact.message));
+    const statusLabel = node('label', 'Stato');
+    const status = document.createElement('select');
+    status.name = 'status';
+    for (const [value, label] of Object.entries(STATUS)) status.append(option(value, label, contact.status === value));
+    statusLabel.append(status);
+    const notesLabel = node('label', 'Note interne');
+    const notes = document.createElement('textarea');
+    notes.name = 'notes';
+    notes.maxLength = 4000;
+    notes.rows = 3;
+    notes.value = contact.notes || '';
+    notesLabel.append(notes);
+    const save = document.createElement('button');
+    save.type = 'submit';
+    save.textContent = 'Salva';
+    form.append(statusLabel, notesLabel, save);
+    form.addEventListener('submit', async event => {
+      event.preventDefault();
+      save.disabled = true;
+      notify('Salvataggio in corso…');
+      try {
+        const {contact: updated} = await request('contact', {id: contact.id, status: status.value, notes: notes.value});
+        const index = contacts.findIndex(item => item.id === contact.id);
+        if (index >= 0) contacts[index] = updated;
+        notify('Richiesta aggiornata.');
+        renderContacts();
+      } catch (error) { notify(error.message); save.disabled = false; }
+    });
+    target.append(form);
   }
 }
+async function loadContacts() {
+  const session = token;
+  const data = await request('contacts');
+  if (token !== session) return;
+  contacts = Array.isArray(data.contacts) ? data.contacts : [];
+  renderContacts();
+}
+el('filter-status').onchange = renderContacts;
 el('refresh').onclick = () => loadContacts().catch(error => notify(error.message));
 el('logout').onclick = () => { signOut(); notify('Sessione chiusa su questo dispositivo.'); };
 el('login').onsubmit = async (event) => {
@@ -113,4 +167,3 @@ el('publish').onclick = async () => {
     notify('Listino pubblicato. Quotazioni attive: ' + published + '.');
   } catch (error) { if (version === reviewVersion) { notify(error.message); el('publish').disabled = !reviewed; } }
 };
-
