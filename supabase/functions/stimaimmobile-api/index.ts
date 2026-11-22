@@ -321,8 +321,6 @@ async function handle(req: Request): Promise<Response> {
         select
           (select count(*)::int from stimaimmobile.omi_zones) as zones,
           (select count(*)::int from stimaimmobile.omi_quotes) as quotes,
-          (select count(distinct semester)::int from stimaimmobile.omi_quotes) as semesters,
-          (select max(semester) from stimaimmobile.omi_quotes) as latest,
           (select count(*)::int from stimaimmobile.rates where fonte = ${OMI_FONTE}) as rates,
           (select count(*)::int from stimaimmobile.rates where fonte is distinct from ${OMI_FONTE}) as other_rates`);
       return json({ ...stats, fonte: OMI_FONTE, license: OMI_LICENSE });
@@ -331,8 +329,8 @@ async function handle(req: Request): Promise<Response> {
       const comune = field(requestUrl.searchParams.get("comune") || "", "comune", 150);
       if (comune.length < 2) throw new HttpError(422, "Inserisci almeno due caratteri per il comune.");
       const zona = field(requestUrl.searchParams.get("zona") || "", "zona", 150, false);
-      const requested = field(requestUrl.searchParams.get("semester") || "", "semestre", 8, false);
-      if (requested && requested !== "2018-2") throw new HttpError(422, "È disponibile solo il semestre 2018-2.");
+      const requested = field(requestUrl.searchParams.get("semester") || "", "filtro", 8, false);
+      if (requested && requested !== "2018-2") throw new HttpError(422, "Filtro non disponibile.");
       const semester = "2018-2";
       const offsetRaw = requestUrl.searchParams.get("offset") || "0";
       if (!/^\d{1,4}$/.test(offsetRaw) || Number(offsetRaw) > 4000) throw new HttpError(422, "Pagina non valida.");
@@ -340,7 +338,7 @@ async function handle(req: Request): Promise<Response> {
       const limit = 80;
       const zonaNeedle = zona ? "%" + likeNeedle(zona) + "%" : "";
       const rows = await scope(tx => tx`
-        select comune, zona, tipologia, euro_mq, semester
+        select comune, zona, tipologia, euro_mq
         from (
           select distinct on (
             lower(trim(q.comune)),
@@ -356,8 +354,7 @@ async function handle(req: Request): Promise<Response> {
                 when coalesce(q.compr_min, 0) > 0 then q.compr_min
                 else q.compr_max
               end
-            ), 2) as euro_mq,
-            q.semester
+            ), 2) as euro_mq
           from stimaimmobile.omi_quotes q
           left join stimaimmobile.omi_zones z
             on z.semester = q.semester and z.link_zona = q.link_zona
@@ -381,10 +378,10 @@ async function handle(req: Request): Promise<Response> {
         offset ${offset}`);
       const page = rows.slice(0, limit).map(row => ({
         comune: row.comune, zona: row.zona, tipologia: row.tipologia,
-        euro_mq: Number(row.euro_mq), semester: row.semester,
+        euro_mq: Number(row.euro_mq),
       }));
       return json({
-        rows: page, hasMore: rows.length > limit, offset, semester,
+        rows: page, hasMore: rows.length > limit, offset,
         fonte: OMI_FONTE, license: OMI_LICENSE,
       });
     }
