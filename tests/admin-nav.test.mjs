@@ -26,8 +26,10 @@ test('field search filters by name and OMI browse stays read-only', () => {
   assert.match(js, /fieldQuery/);
   assert.match(js, /omi\/quotes\?/);
   assert.match(js, /showPanel\('parametri'\)/);
-  assert.match(html, /Semestre 2018-2/);
-  assert.doesNotMatch(html, /2016-1|2016-2|2017-1|2017-2|2018-1|name="semester"/);
-  assert.doesNotMatch(js, /form\.elements\.semester|2016-1|2018-1/);
+  const omi = html.slice(html.indexOf('id="panel-omi"'), html.indexOf('id="status"'));
+  assert.match(omi, /Agenzia delle Entrate – OMI/);
+  assert.doesNotMatch(omi, /2018-2|semestre|il più recente in archivio/i);
+  assert.doesNotMatch(html, /2016-1|2016-2|2017-1|2017-2|2018-1|2018-2|name="semester"/);
+  assert.doesNotMatch(js, /form\.elements\.semester|2016-1|2018-1|2018-2|semestre|il più recente in archivio/i);
   assert.doesNotMatch(js, /omi_ingest|import:omi|publish_omi_rates/);
 });

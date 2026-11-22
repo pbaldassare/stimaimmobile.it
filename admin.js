@@ -129,8 +129,7 @@ async function loadOmi() {
   if (token !== session || !data) return;
   const stats = el('omi-stats');
   if (!stats) return;
-  stats.textContent = 'La ricerca mostra le quotazioni del semestre 2018-2. Fonte: «' +
-    (data.fonte || 'Agenzia delle Entrate – OMI') + '» (' + (data.license || 'CC-BY 4.0') + ').';
+  stats.textContent = 'Fonte: «' + (data.fonte || 'Agenzia delle Entrate – OMI') + '».';
 }
 async function loadContacts() {
   const session = token;
@@ -504,8 +503,8 @@ async function loadOmiQuotes(offset, append) {
   const fonte = data.fonte || 'Agenzia delle Entrate – OMI';
   const quota = shown === 1 ? '1 quotazione' : shown + ' quotazioni';
   el('omi-summary').textContent = shown
-    ? quota + (data.hasMore ? ' mostrate, ce ne sono altre' : '') + '. Semestre 2018-2. Fonte: «' + fonte + '».'
-    : 'Nessuna quotazione per questo comune nel semestre 2018-2. Fonte: «' + fonte + '».';
+    ? quota + (data.hasMore ? ' mostrate, ce ne sono altre' : '') + '. Fonte: «' + fonte + '».'
+    : 'Nessuna quotazione per questo comune. Fonte: «' + fonte + '».';
 }
 for (const id of PANELS) el('nav-' + id).onclick = () => showPanel(id);
 el('field-search').oninput = () => {
