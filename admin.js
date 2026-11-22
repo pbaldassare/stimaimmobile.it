@@ -8,7 +8,13 @@ let reviewVersion = 0;
 let contacts = [];
 let modelFields = [];
 let editingIndex = -1;
+let fieldQuery = '';
+let omiOffset = 0;
+let comuniLoaded = false;
+const OMI_PAGE = 80;
+const PANELS = ['parametri', 'richieste', 'omi'];
 const CONTROL = { select: 'Tendina', yesno: 'Sì / No', count: 'Conteggio 0–N', number: 'Numero' };
+const euroFormat = new Intl.NumberFormat('it-IT', { minimumFractionDigits: 0, maximumFractionDigits: 2 });
 
 function notify(message) { el('status').textContent = message; }
 function clearPreview() {
@@ -30,6 +36,15 @@ function signOut() {
   el('rows').replaceChildren();
   el('field-rows').replaceChildren();
   el('field-editor').hidden = true;
+  el('field-search').value = '';
+  fieldQuery = '';
+  el('field-count').textContent = '';
+  el('omi-search').reset();
+  el('omi-rows').replaceChildren();
+  el('omi-summary').textContent = '';
+  el('omi-more').hidden = true;
+  omiOffset = 0;
+  showPanel('parametri');
   el('access').hidden = false;
   el('management').hidden = true;
 }
@@ -114,7 +129,7 @@ async function loadOmi() {
   if (token !== session || !data) return;
   const stats = el('omi-stats');
   if (!stats) return;
-  const latest = data.latest ? ' semestre ' + data.latest : '';
+  const latest = data.latest ? '. Semestre ' + data.latest : '';
   stats.textContent = 'Archivio OMI: ' + (data.zones ?? 0) + ' zone, ' + (data.quotes ?? 0) + ' quotazioni' + latest +
     '. Listino sito: ' + (data.rates ?? 0) + ' righe OMI e ' + (data.other_rates ?? 0) +
     ' righe di altra fonte. Fonte: ' + (data.fonte || 'Agenzia delle Entrate – OMI') +
@@ -143,6 +158,7 @@ el('login').onsubmit = async (event) => {
     form.reset();
     el('access').hidden = true;
     el('management').hidden = false;
+    showPanel('parametri');
     notify('');
     await Promise.all([loadContacts(), loadOmi(), loadFields()]);
   } catch (error) { notify(error.message); }
@@ -195,14 +211,51 @@ function uniqueId(base) {
 function renderGroups() {
   el('field-groups').replaceChildren(...[...new Set(modelFields.map(item => item.group))].map(name => option(name, name)));
 }
+function points(value) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return '0';
+  const text = String(number).replace('.', ',');
+  return number > 0 ? '+' + text : text;
+}
+function answerPreview(field) {
+  const options = Array.isArray(field.options) ? field.options : [];
+  if (!options.length) return '—';
+  const shown = options.slice(0, 4).map(item => (item.label || item.value) + ' ' + points(item.coefficient));
+  if (options.length > 4) shown.push('+' + (options.length - 4));
+  return shown.join(' · ');
+}
+function fieldVisible(field) {
+  if (!fieldQuery) return true;
+  return String(field.label || '').toLocaleLowerCase('it').includes(fieldQuery);
+}
 function renderFields() {
   const body = el('field-rows');
   body.replaceChildren();
+  const visible = modelFields.filter(fieldVisible);
+  const labelCount = count => count === 1 ? '1 campo' : count + ' campi';
+  el('field-count').textContent = fieldQuery
+    ? labelCount(visible.length) + ' su ' + labelCount(modelFields.length)
+    : labelCount(modelFields.length);
+  if (!visible.length) {
+    const tr = document.createElement('tr');
+    const td = node('td', modelFields.length ? 'Nessun campo con questo nome.' : 'Nessun parametro in archivio.');
+    td.colSpan = 7;
+    tr.append(td);
+    body.append(tr);
+    renderGroups();
+    return;
+  }
   modelFields.forEach((field, index) => {
+    if (!fieldVisible(field)) return;
     const tr = document.createElement('tr');
     if (index === editingIndex) tr.className = 'selected';
     const condition = field.whenFieldId ? 'se ' + field.whenFieldId : 'sempre';
-    for (const value of [String(index + 1), field.label, field.group, CONTROL[field.type] || field.type, condition]) tr.append(node('td', value));
+    const values = [String(index + 1), field.label, field.group, CONTROL[field.type] || field.type, answerPreview(field), condition];
+    values.forEach((value, cell) => {
+      const td = node('td', value);
+      if (cell === 4) td.className = 'answers';
+      tr.append(td);
+    });
     const actions = document.createElement('td');
     actions.className = 'row-actions';
     const edit = node('button', 'Modifica');
@@ -212,12 +265,12 @@ function renderFields() {
     const up = node('button', 'Su');
     up.type = 'button';
     up.className = 'outline';
-    up.disabled = index === 0;
+    up.disabled = index === 0 || Boolean(fieldQuery);
     up.onclick = () => { const [item] = modelFields.splice(index, 1); modelFields.splice(index - 1, 0, item); if (editingIndex === index) editingIndex = index - 1; else if (editingIndex === index - 1) editingIndex = index; renderFields(); };
     const down = node('button', 'Giù');
     down.type = 'button';
     down.className = 'outline';
-    down.disabled = index === modelFields.length - 1;
+    down.disabled = index === modelFields.length - 1 || Boolean(fieldQuery);
     down.onclick = () => { const [item] = modelFields.splice(index, 1); modelFields.splice(index + 1, 0, item); if (editingIndex === index) editingIndex = index + 1; else if (editingIndex === index + 1) editingIndex = index; renderFields(); };
     const remove = node('button', 'Elimina');
     remove.type = 'button';
@@ -403,6 +456,84 @@ el('field-reset').onclick = async () => {
     notify('Modello ripristinato dai coefficienti Excel e pubblicato.');
   } catch (error) { notify(error.message); }
   finally { el('field-reset').disabled = false; }
+};
+function showPanel(name) {
+  for (const id of PANELS) {
+    el('panel-' + id).hidden = id !== name;
+    const button = el('nav-' + id);
+    if (id === name) button.setAttribute('aria-current', 'page');
+    else button.removeAttribute('aria-current');
+  }
+  if (name === 'omi') loadComuni().catch(() => {});
+}
+async function loadComuni() {
+  if (comuniLoaded) return;
+  const response = await apiFetch('/api/zones');
+  const data = await response.json().catch(() => ({}));
+  const names = Array.isArray(data.comuni) ? data.comuni : [];
+  el('omi-comuni').replaceChildren(...names.map(name => option(name, name)));
+  if (names.length) comuniLoaded = true;
+}
+function omiQuery(offset) {
+  const form = el('omi-search');
+  const params = new URLSearchParams({
+    comune: form.elements.comune.value.trim(),
+    zona: form.elements.zona.value.trim(),
+    semester: form.elements.semester.value,
+    offset: String(offset)
+  });
+  return 'omi/quotes?' + params.toString();
+}
+function renderOmiRows(rows, append) {
+  const body = el('omi-rows');
+  if (!append) body.replaceChildren();
+  for (const row of rows) {
+    const tr = document.createElement('tr');
+    tr.append(node('td', row.comune), node('td', row.zona), node('td', row.tipologia));
+    const price = node('td', euroFormat.format(Number(row.euro_mq)));
+    price.className = 'num';
+    tr.append(price);
+    body.append(tr);
+  }
+}
+async function loadOmiQuotes(offset, append) {
+  const session = token;
+  const data = await request(omiQuery(offset));
+  if (token !== session) return;
+  const rows = Array.isArray(data.rows) ? data.rows : [];
+  renderOmiRows(rows, append);
+  omiOffset = offset + rows.length;
+  el('omi-more').hidden = !data.hasMore;
+  const shown = el('omi-rows').rows.length;
+  const fonte = data.fonte || 'Agenzia delle Entrate – OMI';
+  const quota = shown === 1 ? '1 quotazione' : shown + ' quotazioni';
+  el('omi-summary').textContent = shown
+    ? quota + (data.hasMore ? ' mostrate, ce ne sono altre' : '') + '. Semestre ' + (data.semester || '') + '. Fonte: «' + fonte + '».'
+    : 'Nessuna quotazione per questo comune nel semestre selezionato. Fonte: «' + fonte + '».';
+}
+for (const id of PANELS) el('nav-' + id).onclick = () => showPanel(id);
+el('field-search').oninput = () => {
+  fieldQuery = el('field-search').value.trim().toLocaleLowerCase('it');
+  renderFields();
+};
+el('omi-search').onsubmit = async event => {
+  event.preventDefault();
+  const button = event.currentTarget.querySelector('button');
+  button.disabled = true;
+  notify('Ricerca delle quotazioni OMI…');
+  try {
+    await loadOmiQuotes(0, false);
+    notify('');
+  } catch (error) { notify(error.message); }
+  finally { button.disabled = false; }
+};
+el('omi-more').onclick = async () => {
+  el('omi-more').disabled = true;
+  try {
+    await loadOmiQuotes(omiOffset, true);
+    notify('');
+  } catch (error) { notify(error.message); }
+  finally { el('omi-more').disabled = false; }
 };
 el('publish').onclick = async () => {
   if (!reviewed) return;

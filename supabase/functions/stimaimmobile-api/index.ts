@@ -327,6 +327,66 @@ async function handle(req: Request): Promise<Response> {
           (select count(*)::int from stimaimmobile.rates where fonte is distinct from ${OMI_FONTE}) as other_rates`);
       return json({ ...stats, fonte: OMI_FONTE, license: OMI_LICENSE });
     }
+    if (route === "GET /admin/omi/quotes") {
+      const comune = field(requestUrl.searchParams.get("comune") || "", "comune", 150);
+      if (comune.length < 2) throw new HttpError(422, "Inserisci almeno due caratteri per il comune.");
+      const zona = field(requestUrl.searchParams.get("zona") || "", "zona", 150, false);
+      const semester = field(requestUrl.searchParams.get("semester") || "2018-2", "semestre", 8);
+      if (!/^\d{4}-[12]$/.test(semester)) throw new HttpError(422, "Semestre non valido.");
+      const offsetRaw = requestUrl.searchParams.get("offset") || "0";
+      if (!/^\d{1,4}$/.test(offsetRaw) || Number(offsetRaw) > 4000) throw new HttpError(422, "Pagina non valida.");
+      const offset = Number(offsetRaw);
+      const limit = 80;
+      const zonaNeedle = zona ? "%" + likeNeedle(zona) + "%" : "";
+      const rows = await scope(tx => tx`
+        select comune, zona, tipologia, euro_mq, semester
+        from (
+          select distinct on (
+            lower(trim(q.comune)),
+            lower(trim(left(coalesce(nullif(trim(z.zona_descr), ''), q.zona), 150))),
+            lower(trim(left(q.tipologia, 150)))
+          )
+            q.comune,
+            left(coalesce(nullif(trim(z.zona_descr), ''), q.zona), 150) as zona,
+            left(q.tipologia, 150) as tipologia,
+            round((
+              case
+                when coalesce(q.compr_min, 0) > 0 and coalesce(q.compr_max, 0) > 0 then (q.compr_min + q.compr_max) / 2
+                when coalesce(q.compr_min, 0) > 0 then q.compr_min
+                else q.compr_max
+              end
+            ), 2) as euro_mq,
+            q.semester
+          from stimaimmobile.omi_quotes q
+          left join stimaimmobile.omi_zones z
+            on z.semester = q.semester and z.link_zona = q.link_zona
+          where q.semester = ${semester}
+            and lower(trim(q.comune)) = lower(trim(${comune}))
+            and (coalesce(q.compr_min, 0) > 0 or coalesce(q.compr_max, 0) > 0)
+            and (
+              ${zonaNeedle} = ''
+              or lower(trim(q.zona)) like ${zonaNeedle} escape ${"\\"}
+              or lower(trim(coalesce(z.zona_descr, ''))) like ${zonaNeedle} escape ${"\\"}
+            )
+          order by
+            lower(trim(q.comune)),
+            lower(trim(left(coalesce(nullif(trim(z.zona_descr), ''), q.zona), 150))),
+            lower(trim(left(q.tipologia, 150))),
+            case when q.stato_prevalente then 0 when lower(trim(q.stato)) = 'normale' then 1 else 2 end
+        ) mapped
+        where euro_mq > 0
+        order by comune, zona, tipologia
+        limit ${limit + 1}
+        offset ${offset}`);
+      const page = rows.slice(0, limit).map(row => ({
+        comune: row.comune, zona: row.zona, tipologia: row.tipologia,
+        euro_mq: Number(row.euro_mq), semester: row.semester,
+      }));
+      return json({
+        rows: page, hasMore: rows.length > limit, offset, semester,
+        fonte: OMI_FONTE, license: OMI_LICENSE,
+      });
+    }
     if (route === "POST /admin/contact") {
       const data = await readBody(req);
       const id = field(data.id, "richiesta", 36);
