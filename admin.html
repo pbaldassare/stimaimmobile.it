@@ -2,10 +2,22 @@
 <html lang="it"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex"><meta name="referrer" content="no-referrer"><title>Area riservata · StimaImmobile.it</title><link rel="stylesheet" href="./admin.css"><script type="module" src="./admin.js"></script></head>
 <body><header><a class="brand" href="./">StimaImmobile<span>.it</span></a><span>Area amministrativa</span></header>
 <main><section id="access"><h1>Accedi all’area riservata</h1><p>Usa l’account abilitato alla gestione di StimaImmobile.</p><form id="login"><label>Email<input name="email" type="email" required autocomplete="username"></label><label>Password<input name="password" type="password" required autocomplete="current-password"></label><button>Accedi</button></form></section>
-<section id="management" hidden><div class="top"><h1>Area riservata</h1><button id="logout" class="outline">Esci</button></div>
-<article><div class="top"><h2>Parametri di valutazione</h2><div class="toolbar"><button class="outline" id="field-add" type="button">Aggiungi campo</button><button class="outline" id="field-reset" type="button">Ripristina Excel</button><button id="field-save" type="button">Salva i parametri</button></div></div>
-<p class="hint">Ogni risposta è un plus o minus sulla quotazione OMI della zona (punto medio min/max del semestre in listino). Formula: superficie × €/m² × (1 + somma coefficienti / 100). Le modifiche valgono dal salvataggio, senza un nuovo deploy.</p>
-<div class="scroll"><table><thead><tr><th>Ordine</th><th>Campo</th><th>Gruppo</th><th>Controllo</th><th>Visibilità</th><th></th></tr></thead><tbody id="field-rows"></tbody></table></div>
+<section id="management" hidden>
+<div class="top"><h1>Area riservata</h1><button id="logout" class="outline">Esci</button></div>
+<div class="workspace">
+<nav class="sidebar" aria-label="Sezioni dell’area riservata">
+  <p>Sezioni</p>
+  <button type="button" id="nav-parametri" aria-controls="panel-parametri" aria-current="page">Parametri</button>
+  <button type="button" id="nav-richieste" aria-controls="panel-richieste">Richieste</button>
+  <button type="button" id="nav-omi" aria-controls="panel-omi">Dati OMI</button>
+</nav>
+<div class="panel">
+<article id="panel-parametri">
+<div class="top"><h2>Parametri</h2><div class="toolbar"><button class="outline" id="field-add" type="button">Aggiungi campo</button><button class="outline" id="field-reset" type="button">Ripristina Excel</button><button id="field-save" type="button">Salva i parametri</button></div></div>
+<p class="hint">Campi, risposte e coefficienti già in archivio. Ogni risposta è un plus o minus sulla quotazione OMI della zona (punto medio min/max del semestre in listino). Formula: superficie × €/m² × (1 + somma coefficienti / 100). Le modifiche valgono dal salvataggio, senza un nuovo deploy.</p>
+<label class="search">Cerca per nome<input id="field-search" type="search" placeholder="Nome del campo" maxlength="180" autocomplete="off"></label>
+<p id="field-count" class="hint"></p>
+<div class="scroll"><table><thead><tr><th>Ordine</th><th>Campo</th><th>Gruppo</th><th>Controllo</th><th>Risposte e coefficienti</th><th>Visibilità</th><th></th></tr></thead><tbody id="field-rows"></tbody></table></div>
 <section id="field-editor" hidden>
   <h3 id="field-editor-title">Modifica campo</h3>
   <form id="field-form" class="editor">
@@ -31,15 +43,42 @@
 </section>
 <datalist id="field-groups"></datalist>
 </article>
-<article><div class="top"><h2>Richieste</h2><div class="toolbar"><label>Stato<select id="filter-status"><option value="">Tutte</option><option value="new">Nuove</option><option value="contacted">Contattate</option><option value="closed">Chiuse</option></select></label><button class="outline" id="refresh" type="button">Aggiorna</button></div></div>
+<article id="panel-richieste" hidden>
+<div class="top"><h2>Richieste</h2><div class="toolbar"><label>Stato<select id="filter-status"><option value="">Tutte</option><option value="new">Nuove</option><option value="contacted">Contattate</option><option value="closed">Chiuse</option></select></label><button class="outline" id="refresh" type="button">Aggiorna</button></div></div>
 <p class="hint">Stime con recapiti, messaggi di contatto e richieste di copertura. Puoi aggiornare stato e note.</p>
-<div id="contacts"></div></article>
-<article id="omi-source"><h2>Fonte OMI</h2>
-<p id="omi-stats">Le quotazioni nazionali restano in <code>omi_zones</code> e <code>omi_quotes</code>. Il listino pubblico usa il semestre OMI più recente, con fonte «Agenzia delle Entrate – OMI» (CC-BY 4.0). ondata è solo un redistributore di comodo; il download ufficiale è Forniture OMI dell’Agenzia delle Entrate. Un CSV di aggiornamento non cancella le righe OMI, salvo chiavi identiche nel file.</p>
-<p class="hint">L’esempio Excel Brescia · Centro storico · Direzionale resta in listino se la chiave non è sovrascritta.</p>
+<div id="contacts"></div>
 </article>
-<article><h2>Importa le quotazioni</h2><p>Il CSV dell’operatore sostituisce le quotazioni non OMI. Le valutazioni già emesse conservano la quotazione originale.</p><a href="./modello-listino.csv" download>Scarica il modello CSV</a>
-· <a href="./listino-esempio-excel.csv" download>Esempio Excel (Brescia)</a>
-<form id="load"><label>File CSV in formato UTF-8<input name="list" type="file" accept=".csv,text/csv" required></label><button>Verifica anteprima</button></form>
-<section id="review" hidden><h3>Anteprima del listino</h3><p id="summary"></p><ul id="issues"></ul><div class="scroll"><table><thead><tr><th>Comune</th><th>Zona</th><th>Destinazione</th><th>€/m²</th><th>Fonte</th><th>Data</th></tr></thead><tbody id="rows"></tbody></table></div><button id="publish" disabled>Pubblica e sostituisci il listino</button></section></article></section>
+<article id="panel-omi" hidden>
+<div class="top"><h2>Dati OMI</h2></div>
+<p class="hint">Consultazione in sola lettura delle quotazioni già importate, semestri 2016-1 … 2018-2. Il prezzo mostrato è il punto medio min/max di compravendita. Fonte: «Agenzia delle Entrate – OMI» (CC-BY 4.0).</p>
+<p id="omi-stats">Le quotazioni nazionali restano in archivio. Il listino pubblico usa il semestre OMI più recente.</p>
+<form id="omi-search" class="toolbar">
+  <label>Comune<input name="comune" required minlength="2" maxlength="150" list="omi-comuni" placeholder="es. Milano"></label>
+  <label>Zona<input name="zona" maxlength="150" placeholder="facoltativa"></label>
+  <label>Semestre<select name="semester">
+    <option value="2018-2" selected>2018-2</option>
+    <option value="2018-1">2018-1</option>
+    <option value="2017-2">2017-2</option>
+    <option value="2017-1">2017-1</option>
+    <option value="2016-2">2016-2</option>
+    <option value="2016-1">2016-1</option>
+  </select></label>
+  <button type="submit">Cerca</button>
+</form>
+<datalist id="omi-comuni"></datalist>
+<p id="omi-summary" class="hint"></p>
+<div class="scroll"><table><thead><tr><th>Comune</th><th>Zona</th><th>Tipologia</th><th class="num">€/m²</th></tr></thead><tbody id="omi-rows"></tbody></table></div>
+<button class="outline" id="omi-more" type="button" hidden>Altri risultati</button>
+<div class="subsection">
+  <h3>Listino operatore</h3>
+  <p>Il CSV dell’operatore sostituisce le quotazioni non OMI. L’archivio OMI resta quello già importato. Le valutazioni già emesse conservano la quotazione originale. L’esempio Excel Brescia · Centro storico · Direzionale resta in listino se la chiave non è sovrascritta.</p>
+  <a href="./modello-listino.csv" download>Scarica il modello CSV</a>
+  · <a href="./listino-esempio-excel.csv" download>Esempio Excel (Brescia)</a>
+  <form id="load"><label>File CSV in formato UTF-8<input name="list" type="file" accept=".csv,text/csv" required></label><button>Verifica anteprima</button></form>
+  <section id="review" hidden><h3>Anteprima del listino</h3><p id="summary"></p><ul id="issues"></ul><div class="scroll"><table><thead><tr><th>Comune</th><th>Zona</th><th>Destinazione</th><th>€/m²</th><th>Fonte</th><th>Data</th></tr></thead><tbody id="rows"></tbody></table></div><button id="publish" disabled>Pubblica e sostituisci il listino</button></section>
+</div>
+</article>
+</div>
+</div>
+</section>
 <p id="status" role="status" aria-live="polite"></p></main></body></html>
