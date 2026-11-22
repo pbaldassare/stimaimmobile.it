@@ -331,8 +331,9 @@ async function handle(req: Request): Promise<Response> {
       const comune = field(requestUrl.searchParams.get("comune") || "", "comune", 150);
       if (comune.length < 2) throw new HttpError(422, "Inserisci almeno due caratteri per il comune.");
       const zona = field(requestUrl.searchParams.get("zona") || "", "zona", 150, false);
-      const semester = field(requestUrl.searchParams.get("semester") || "2018-2", "semestre", 8);
-      if (!/^\d{4}-[12]$/.test(semester)) throw new HttpError(422, "Semestre non valido.");
+      const requested = field(requestUrl.searchParams.get("semester") || "", "semestre", 8, false);
+      if (requested && requested !== "2018-2") throw new HttpError(422, "È disponibile solo il semestre 2018-2.");
+      const semester = "2018-2";
       const offsetRaw = requestUrl.searchParams.get("offset") || "0";
       if (!/^\d{1,4}$/.test(offsetRaw) || Number(offsetRaw) > 4000) throw new HttpError(422, "Pagina non valida.");
       const offset = Number(offsetRaw);

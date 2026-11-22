@@ -129,11 +129,8 @@ async function loadOmi() {
   if (token !== session || !data) return;
   const stats = el('omi-stats');
   if (!stats) return;
-  const latest = data.latest ? '. Semestre ' + data.latest : '';
-  stats.textContent = 'Archivio OMI: ' + (data.zones ?? 0) + ' zone, ' + (data.quotes ?? 0) + ' quotazioni' + latest +
-    '. Listino sito: ' + (data.rates ?? 0) + ' righe OMI e ' + (data.other_rates ?? 0) +
-    ' righe di altra fonte. Fonte: ' + (data.fonte || 'Agenzia delle Entrate – OMI') +
-    ' (' + (data.license || 'CC-BY 4.0') + '). ondata redistribuisce i CSV; il download ufficiale è Forniture OMI.';
+  stats.textContent = 'La ricerca mostra le quotazioni del semestre 2018-2. Fonte: «' +
+    (data.fonte || 'Agenzia delle Entrate – OMI') + '» (' + (data.license || 'CC-BY 4.0') + ').';
 }
 async function loadContacts() {
   const session = token;
@@ -479,7 +476,6 @@ function omiQuery(offset) {
   const params = new URLSearchParams({
     comune: form.elements.comune.value.trim(),
     zona: form.elements.zona.value.trim(),
-    semester: form.elements.semester.value,
     offset: String(offset)
   });
   return 'omi/quotes?' + params.toString();
@@ -508,8 +504,8 @@ async function loadOmiQuotes(offset, append) {
   const fonte = data.fonte || 'Agenzia delle Entrate – OMI';
   const quota = shown === 1 ? '1 quotazione' : shown + ' quotazioni';
   el('omi-summary').textContent = shown
-    ? quota + (data.hasMore ? ' mostrate, ce ne sono altre' : '') + '. Semestre ' + (data.semester || '') + '. Fonte: «' + fonte + '».'
-    : 'Nessuna quotazione per questo comune nel semestre selezionato. Fonte: «' + fonte + '».';
+    ? quota + (data.hasMore ? ' mostrate, ce ne sono altre' : '') + '. Semestre 2018-2. Fonte: «' + fonte + '».'
+    : 'Nessuna quotazione per questo comune nel semestre 2018-2. Fonte: «' + fonte + '».';
 }
 for (const id of PANELS) el('nav-' + id).onclick = () => showPanel(id);
 el('field-search').oninput = () => {
