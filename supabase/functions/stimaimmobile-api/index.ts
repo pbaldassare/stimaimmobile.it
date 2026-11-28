@@ -22,6 +22,7 @@ const url = Deno.env.get("SUPABASE_URL")!;
 const key = Deno.env.get("SUPABASE_ANON_KEY")!;
 const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || "";
 const SITE_URL = (Deno.env.get("STIMAIMMOBILE_SITE_URL") || "https://stimaimmobile-it.pages.dev").replace(/\/+$/, "");
+const PRIVACY_VERSION = "2026-11-28";
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const db = postgres(Deno.env.get("SUPABASE_DB_URL")!, {
   max: 1, prepare: false, idle_timeout: 5, connect_timeout: 8,
@@ -375,21 +376,43 @@ async function handle(req: Request): Promise<Response> {
     return json({ comune:snapshot.comune, zona:snapshot.zona, destinazione:snapshot.destinazione,
       surface:snapshot.result.surface, warnings:snapshot.result.warnings, price:PRICE_CENTS / 100, currency:CURRENCY });
   }
+  if (route === "POST /requests") {
+    // Saved before payment: the admin sees every request, bought or not.
+    const data = await readBody(req);
+    const firstName = field(data.firstName, "nome", 80), lastName = field(data.lastName, "cognome", 80);
+    const email = field(data.email, "email", 254);
+    if (!isEmail(email)) throw new HttpError(422, "Inserisci un indirizzo email valido.");
+    if (data.privacy !== true) throw new HttpError(422, "Accetta l’informativa privacy per procedere.");
+    const recontact = data.recontact === true;
+    const request = await scope(async tx => {
+      const { snapshot } = await buildSnapshot(tx, data);
+      const [row] = await tx`insert into stimaimmobile.valuation_requests(first_name,last_name,email,comune,zona,destinazione,
+          address,snapshot,privacy_accepted_at,privacy_version,recontact_consent)
+        values(${firstName},${lastName},${email},${snapshot.comune},${snapshot.zona},${snapshot.destinazione},
+          ${snapshot.address},${tx.json(snapshot)},now(),${PRIVACY_VERSION},${recontact}) returning id`;
+      return row;
+    });
+    return json({ id: request.id }, 201);
+  }
   if (route === "POST /orders") {
     const user = await requireUser(bearer(req));
     const data = await readBody(req);
-    if (data.privacy !== true) throw new HttpError(422, "Accetta l’informativa privacy per procedere.");
     if (data.consent !== true) throw new HttpError(422, "Conferma la richiesta di consegna immediata per procedere.");
+    const requestId = field(data.requestId, "richiesta", 36);
+    if (!UUID.test(requestId)) throw new HttpError(422, "Richiesta non valida: ricomincia dal questionario.");
     const order = await scope(async tx => {
       const coupon = await couponFor(tx, data.coupon);
-      const { snapshot } = await buildSnapshot(tx, data);
-      Object.assign(snapshot, { privacyAcceptedAt: new Date().toISOString(), privacyVersion: "2026-11-28" });
+      const [request] = await tx`select * from stimaimmobile.valuation_requests where id = ${requestId}::uuid`;
+      if (!request) throw new HttpError(404, "Richiesta non trovata: ricomincia dal questionario.");
+      const snapshot = { ...request.snapshot, firstName: request.first_name, lastName: request.last_name,
+        privacyAcceptedAt: request.privacy_accepted_at, privacyVersion: request.privacy_version };
       const amount = coupon ? coupon.amount : PRICE_CENTS;
       const free = amount === 0;
       const [row] = await tx`insert into stimaimmobile.orders(user_id,email,snapshot,amount_cents,currency,consent_at,
-          coupon_id,list_price_cents,discount_cents,status,paid_at)
+          coupon_id,list_price_cents,discount_cents,status,paid_at,request_id)
         values(${user.id}::uuid,${user.email},${tx.json(snapshot)},${amount},${CURRENCY},now(),
-          ${coupon?.id ?? null},${PRICE_CENTS},${coupon?.discount ?? 0},${free ? "paid" : "pending"},${free ? new Date() : null}) returning *`;
+          ${coupon?.id ?? null},${PRICE_CENTS},${coupon?.discount ?? 0},${free ? "paid" : "pending"},${free ? new Date() : null},
+          ${requestId}::uuid) returning *`;
       return row;
     });
     if (order.status === "paid") {
@@ -550,6 +573,41 @@ async function handle(req: Request): Promise<Response> {
       const contacts = await scope(tx => tx`select id,created_at,updated_at,name,email,message,comune,zona,destinazione,kind,status,notes
         from stimaimmobile.contacts order by created_at desc limit 200`);
       return json({ contacts });
+    }
+    if (route === "GET /admin/dashboard") {
+      const [totals, cities] = await scope(tx => Promise.all([
+        tx`select count(*)::int as total,
+            count(*) filter (where r.created_at >= now() - interval '30 days')::int as last30,
+            count(*) filter (where exists (select 1 from stimaimmobile.orders o where o.request_id = r.id and o.status = 'paid'))::int as purchased,
+            (select coalesce(sum(amount_cents), 0)::int from stimaimmobile.orders where status = 'paid') as revenue_cents
+          from stimaimmobile.valuation_requests r`,
+        tx`select min(comune) as comune, count(*)::int as n from stimaimmobile.valuation_requests
+          group by lower(trim(comune)) order by n desc, comune limit 50`,
+      ]));
+      const t = totals[0];
+      return json({ total: t.total, last30: t.last30, purchased: t.purchased, revenue: t.revenue_cents / 100, cities });
+    }
+    if (route === "GET /admin/requests") {
+      const rows = await scope(tx => tx`
+        select r.*, o.status as order_status, o.amount_cents, c.code as coupon_code
+        from stimaimmobile.valuation_requests r
+        left join lateral (select * from stimaimmobile.orders o where o.request_id = r.id
+          order by (o.status = 'paid') desc, o.created_at desc limit 1) o on true
+        left join stimaimmobile.coupons c on c.id = o.coupon_id
+        order by r.created_at desc limit 500`);
+      return json({ requests: rows.map(row => {
+        const s = row.snapshot || {};
+        const labels = new Map((s.questions || []).map((q: { id: string; label: string }) => [q.id, q.label]));
+        return {
+          id: row.id, createdAt: row.created_at, firstName: row.first_name, lastName: row.last_name, email: row.email,
+          comune: row.comune, zona: row.zona, destinazione: row.destinazione, address: row.address,
+          privacyAcceptedAt: row.privacy_accepted_at, recontact: row.recontact_consent,
+          answers: Object.entries(s.inputs || {}).map(([id, value]) => ({ label: labels.get(id) || id, value })),
+          value: s.result?.value, minimum: s.result?.minimum, surface: s.result?.surface,
+          orderStatus: row.order_status || null, amount: row.amount_cents == null ? null : row.amount_cents / 100,
+          coupon: row.coupon_code || null,
+        };
+      }) });
     }
     if (route === "GET /admin/referrers") {
       const referrers = await scope(tx => tx`

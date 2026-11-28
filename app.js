@@ -6,9 +6,9 @@ const navigation = document.querySelector('#nav');
 const menu = document.querySelector('.menu-btn');
 const money = new Intl.NumberFormat('it-IT', {style:'currency', currency:'EUR'});
 const number = new Intl.NumberFormat('it-IT', {maximumFractionDigits:3});
-const titles = {home:'Il valore reale in un click', metodo:'Metodo', zone:'Zone servite', contatti:'Contatti', valutazione:'Valuta il tuo immobile', ordine:'Riepilogo e pagamento'};
+const titles = {home:'Il valore reale in un click', metodo:'Metodo', zone:'Zone servite', contatti:'Contatti', valutazione:'Valuta il tuo immobile', dati:'I tuoi dati', ordine:'Riepilogo e pagamento'};
 let zones = [], comuni = [], zonesByCity = new Map(), allZonesLoaded = false, listino = null, comuniPending;
-let questions = [], answers = {}, step = 0, wizard = false, quote = null, orderInputs = null, price = 49, coupon = null, checking = false;
+let questions = [], answers = {}, step = 0, wizard = false, quote = null, orderInputs = null, price = 49, coupon = null, requestId = null, contact = {firstName:'', lastName:'', email:'', recontact:false}, checking = false;
 let place = {comune:'', zona:'', destinazione:''};
 let recapiti = {name:'', email:''};
 let renderId = 0;
@@ -92,7 +92,7 @@ function go(name) {
 }
 function focusPage(){document.querySelector('#main').focus({preventScroll:true});window.scrollTo(0,0)}
 function resetEstimate(city=''){
-  place={comune:city,zona:'',destinazione:''}; recapiti={name:'',email:''}; answers={}; wizard=false; step=0; quote=null; orderInputs=null; coupon=null; checking=false;
+  place={comune:city,zona:'',destinazione:''}; recapiti={name:'',email:''}; answers={}; wizard=false; step=0; quote=null; orderInputs=null; coupon=null; requestId=null; checking=false;
 }
 function startExcelExample(){
   resetEstimate(EXAMPLE_PLACE.comune);
@@ -328,14 +328,35 @@ function questionPage(){
     const id=renderId,status=form.querySelector('.error'),buttons=form.querySelectorAll('button');
     status.textContent='';buttons.forEach(b=>b.disabled=true);
     const inputs=Object.fromEntries(questions.filter(q=>visible(q)&&answers[q.id]!==undefined&&answers[q.id]!=='').map(q=>[q.id,answers[q.id]]));
-    try{const next=await request('/api/quote',{...place,inputs});if(id===renderId){quote=next;orderInputs=inputs;go('ordine')}}
+    try{const next=await request('/api/quote',{...place,inputs});if(id===renderId){quote=next;orderInputs=inputs;requestId=null;go('dati')}}
     catch(err){status.textContent=err.message}finally{buttons.forEach(b=>b.disabled=false)}
   });
 }
 function answerRows(){
   return questions.filter(q=>visible(q)&&orderInputs?.[q.id]!==undefined).map(q=>'<div><dt>'+esc(q.label)+'</dt><dd>'+esc(orderInputs[q.id])+(q.id==='surface'?' m²':'')+'</dd></div>').join('');
 }
+function dataPage(){
+  if(!quote||!orderInputs){page.innerHTML='<h1>I tuoi dati</h1><p>Inizia dal comune per preparare la valutazione.</p><a class="btn" href="#valutazione">Inizia la valutazione</a>';return}
+  page.innerHTML=caption('Valutazione immobiliare')+'<h1>I tuoi dati</h1><p class="page-description">Indica chi richiede la valutazione. Nel passaggio successivo vedi il riepilogo e il prezzo.</p>'+
+    '<form id="contact-data" class="panel"><div class="form-grid">'+
+    field('d-first','Nome','<input id="d-first" class="input" name="firstName" required maxlength="80" autocomplete="given-name" value="'+esc(contact.firstName)+'">')+
+    field('d-last','Cognome','<input id="d-last" class="input" name="lastName" required maxlength="80" autocomplete="family-name" value="'+esc(contact.lastName)+'">')+
+    field('d-mail','Email','<input id="d-mail" class="input" name="email" type="email" required maxlength="254" autocomplete="email" value="'+esc(contact.email)+'">',true)+'</div>'+
+    '<label class="choice"><input type="checkbox" name="privacy" required> <span>Ho letto l’<a class="text-link" href="/privacy/" target="_blank" rel="noopener">informativa privacy</a> e acconsento al trattamento dei dati per la valutazione.</span></label>'+
+    '<label class="choice"><input type="checkbox" name="recontact"'+(contact.recontact?' checked':'')+'> Acconsento a essere ricontattato da StimaImmobile.it per informazioni e offerte sui servizi immobiliari (facoltativo).</label>'+
+    errorBox()+'<div class="form-actions"><button type="button" class="btn secondary" id="data-back">Indietro</button><button class="btn" type="submit">Continua</button></div></form>';
+  document.querySelector('#data-back').addEventListener('click',()=>{wizard=true;go('valutazione')});
+  const form=document.querySelector('#contact-data');
+  form.addEventListener('submit',async e=>{
+    e.preventDefault();const btn=form.querySelector('[type=submit]'),status=form.querySelector('.error'),data=Object.fromEntries(new FormData(form));
+    contact={firstName:data.firstName.trim(),lastName:data.lastName.trim(),email:data.email.trim(),recontact:Boolean(data.recontact)};
+    status.textContent='';btn.disabled=true;
+    try{const saved=await apiJson('/api/requests',{...place,inputs:orderInputs,...contact,privacy:true});requestId=saved.id;go('ordine')}
+    catch(err){status.textContent=err.message;btn.disabled=false}
+  });
+}
 function orderPage(){
+  if(quote&&orderInputs&&!requestId){go('dati');return}
   if(!quote||!orderInputs){page.innerHTML='<h1>Riepilogo</h1><p>Inizia dal comune per preparare la valutazione.</p><a class="btn" href="#valutazione">Inizia la valutazione</a>';return}
   const session=getSession(),warnings=quote.warnings||[];
   page.innerHTML=caption('Riepilogo e pagamento')+'<h1>La tua valutazione è pronta</h1><p class="page-description">'+esc([place.address,[quote.comune,quote.zona,quote.destinazione].join(' · ')].filter(Boolean).join(' — '))+'</p>'+
@@ -349,10 +370,9 @@ function orderPage(){
     '<form id="checkout" class="panel"><h2>'+(session?'Account':'Accedi o crea un account')+'</h2>'+
     (session?'<p class="muted">Accesso come <strong>'+esc(session.email||'utente')+'</strong> · <button type="button" class="text-link" id="switch-user">Cambia account</button></p>'
       :'<div class="choice-row" role="radiogroup" aria-label="Accesso"><label class="choice"><input type="radio" name="mode" value="signup" checked> Nuovo cliente</label><label class="choice"><input type="radio" name="mode" value="login"> Ho già un account</label></div><div class="form-grid">'+
-        field('o-mail','Email','<input id="o-mail" class="input" name="email" type="email" required maxlength="254" autocomplete="email">')+
+        field('o-mail','Email','<input id="o-mail" class="input" name="email" type="email" required maxlength="254" autocomplete="email" value="'+esc(contact.email)+'">')+
         field('o-pass','Password (almeno 8 caratteri)','<input id="o-pass" class="input" name="password" type="password" required minlength="8" autocomplete="new-password">')+'</div>')+
     // TODO legale: testo definitivo di termini di vendita e rinuncia al recesso da far validare.
-    '<label class="choice"><input type="checkbox" name="privacy" required> Ho letto l’<a class="text-link" href="/privacy/" target="_blank" rel="noopener">informativa privacy</a> e acconsento al trattamento dei dati per la valutazione.</label>'+
     '<label class="choice"><input type="checkbox" name="consent" required> Chiedo la consegna immediata della valutazione e prendo atto che, una volta resa disponibile, perdo il diritto di recesso.</label>'+
     errorBox()+'<div class="form-actions"><button class="btn" type="submit">'+(coupon&&coupon.amount===0?'Conferma l’ordine gratuito':'Paga '+money.format(coupon?coupon.amount:price))+'</button></div></form>';
   document.querySelector('#coupon-remove')?.addEventListener('click',()=>{coupon=null;orderPage()});
@@ -363,7 +383,7 @@ function orderPage(){
     try{coupon=await apiJson('/api/coupon/check',{code:couponForm.querySelector('#o-coupon').value});orderPage();document.querySelector('#coupon-form').scrollIntoView({block:'center'})}
     catch(err){status.textContent=err.message;btn.disabled=false}
   });
-  document.querySelector('#edit').addEventListener('click',()=>{wizard=true;step=0;go('valutazione')});
+  document.querySelector('#edit').addEventListener('click',()=>{wizard=true;step=0;requestId=null;go('valutazione')});
   document.querySelector('#switch-user')?.addEventListener('click',()=>{clearSession();orderPage()});
   const form=document.querySelector('#checkout');
   form.querySelectorAll('[name=mode]').forEach(r=>r.addEventListener('change',()=>{form.querySelector('#o-pass').autocomplete=r.value==='login'?'current-password':'new-password'}));
@@ -377,7 +397,7 @@ function orderPage(){
         if(auth.confirm){status.textContent='Ti abbiamo inviato una email di conferma: apri il link, poi torna qui e scegli «Ho già un account».';btn.disabled=false;return}
         setSession(auth);
       }
-      const {checkoutUrl,order}=await apiJson('/api/orders',{...place,inputs:orderInputs,consent:true,privacy:true,coupon:coupon?.code||''},{auth:true});
+      const {checkoutUrl,order}=await apiJson('/api/orders',{requestId,consent:true,coupon:coupon?.code||''},{auth:true});
       location.href=checkoutUrl||('/account/?ordine='+encodeURIComponent(order.id));
     }catch(err){status.textContent=err.message;btn.disabled=false;if(err.status===401)orderPage()}
   });
@@ -400,6 +420,7 @@ async function render(){
   if(current==='metodo'){methodPage();return}
   if(current==='indirizzo'||(current==='valutazione'&&!place.comune&&!wizard)){addressPage();return}
   if(current==='contatti'){page.innerHTML=caption('Contatti')+'<h1>Come possiamo aiutarti?</h1>'+contactForm();bindContact();return}
+  if(current==='dati'){dataPage();return}
   if(current==='ordine'){orderPage();return}
   page.innerHTML='<p role="status">Verifica delle quotazioni in corso…</p>';
   try{

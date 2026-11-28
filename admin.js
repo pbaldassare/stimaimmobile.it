@@ -10,13 +10,15 @@ let reviewVersion = 0;
 let contacts = [];
 let orders = [];
 let referrers = [];
+let requests = [];
 let modelFields = [];
 let editingIndex = -1;
 let fieldQuery = '';
 let omiOffset = 0;
 let comuniLoaded = false;
 const OMI_PAGE = 80;
-const PANELS = ['parametri', 'richieste', 'ordini', 'segnalatori', 'omi'];
+const PANELS = ['dashboard', 'richieste', 'contatti', 'ordini', 'segnalatori', 'parametri', 'omi'];
+const REQUEST_STATUS = { none: 'Non acquistata', pending: 'Ordine in attesa', paid: 'Pagata', refunded: 'Rimborsata', cancelled: 'Ordine annullato' };
 const CONTROL = { select: 'Tendina', yesno: 'Sì / No', count: 'Conteggio 0–N', number: 'Numero' };
 const euroFormat = new Intl.NumberFormat('it-IT', { minimumFractionDigits: 0, maximumFractionDigits: 2 });
 
@@ -40,6 +42,10 @@ function signOut() {
   el('orders').replaceChildren();
   referrers = [];
   el('referrers').replaceChildren();
+  requests = [];
+  el('requests').replaceChildren();
+  el('dashboard-stats').replaceChildren();
+  el('dashboard-cities').replaceChildren();
   el('issues').replaceChildren();
   el('rows').replaceChildren();
   el('field-rows').replaceChildren();
@@ -52,7 +58,7 @@ function signOut() {
   el('omi-summary').textContent = '';
   el('omi-more').hidden = true;
   omiOffset = 0;
-  showPanel('parametri');
+  showPanel('dashboard');
   el('access').hidden = false;
   el('management').hidden = true;
 }
@@ -300,6 +306,83 @@ el('referrer-new').onsubmit = async event => {
   } catch (error) { notify(error.message); }
   finally { button.disabled = false; }
 };
+function stat(label, value) {
+  const box = document.createElement('div');
+  box.className = 'stat';
+  box.append(node('span', label), node('strong', value));
+  return box;
+}
+async function loadDashboard() {
+  const session = token;
+  const data = await request('dashboard');
+  if (token !== session) return;
+  const rate = data.total ? Math.round(data.purchased / data.total * 100) : 0;
+  el('dashboard-stats').replaceChildren(
+    stat('Richieste totali', String(data.total)),
+    stat('Ultimi 30 giorni', String(data.last30)),
+    stat('Acquistate', data.purchased + ' (' + rate + '%)'),
+    stat('Incassato', euro.format(data.revenue)));
+  const cities = Array.isArray(data.cities) ? data.cities : [];
+  const max = Math.max(1, ...cities.map(city => city.n));
+  if (!cities.length) { el('dashboard-cities').replaceChildren(node('p', 'Nessuna richiesta ancora.')); return; }
+  el('dashboard-cities').replaceChildren(...cities.map(city => {
+    const row = document.createElement('div');
+    row.className = 'city-row';
+    const bar = document.createElement('span');
+    bar.className = 'city-bar';
+    bar.style.width = Math.max(2, city.n / max * 100) + '%';
+    const track = document.createElement('span');
+    track.className = 'city-track';
+    track.append(bar);
+    row.append(node('span', city.comune || '—', 'city-name'), track, node('strong', String(city.n)));
+    return row;
+  }));
+}
+function requestState(item) { return item.orderStatus || 'none'; }
+function renderRequests() {
+  const target = el('requests');
+  target.replaceChildren();
+  const filter = el('filter-request').value;
+  const query = el('search-request').value.trim().toLocaleLowerCase('it');
+  const rows = requests.filter(item => (!filter || requestState(item) === filter) &&
+    (!query || [item.firstName, item.lastName, item.email, item.comune].join(' ').toLocaleLowerCase('it').includes(query)));
+  el('request-count').textContent = rows.length + (rows.length === 1 ? ' richiesta' : ' richieste') + (rows.length !== requests.length ? ' su ' + requests.length : '') + '.';
+  if (!rows.length) { target.append(node('p', requests.length ? 'Nessuna richiesta con questi filtri.' : 'Nessuna richiesta ricevuta.')); return; }
+  for (const item of rows) {
+    const card = document.createElement('section');
+    card.className = 'request';
+    const head = document.createElement('div');
+    head.className = 'request-head';
+    head.append(node('span', REQUEST_STATUS[requestState(item)] || requestState(item), 'badge'), node('strong', item.firstName + ' ' + item.lastName));
+    const place = [item.address, [item.comune, item.zona, item.destinazione].filter(Boolean).join(' · ')].filter(Boolean).join(' — ');
+    const facts = [item.email, new Date(item.createdAt).toLocaleString('it-IT'),
+      'ricontatto: ' + (item.recontact ? 'sì' : 'no')];
+    const money = ['stima ' + (item.value != null ? euro.format(item.value) : '—') + (item.minimum != null ? ' (minimo ' + euro.format(item.minimum) + ')' : ''),
+      item.surface ? item.surface + ' m²' : ''];
+    if (item.amount != null) money.push('ordine ' + euro.format(item.amount) + (item.coupon ? ' con codice ' + item.coupon : ''));
+    card.append(head, node('p', facts.join(' · ')), node('p', place), node('p', money.filter(Boolean).join(' · ')),
+      node('p', 'Privacy accettata il ' + new Date(item.privacyAcceptedAt).toLocaleString('it-IT'), 'hint'));
+    const details = document.createElement('details');
+    details.append(node('summary', 'Risposte del questionario (' + item.answers.length + ')'));
+    const list = document.createElement('dl');
+    list.className = 'qa';
+    for (const answer of item.answers) list.append(node('dt', answer.label), node('dd', String(answer.value)));
+    details.append(list);
+    card.append(details);
+    target.append(card);
+  }
+}
+async function loadRequests() {
+  const session = token;
+  const data = await request('requests');
+  if (token !== session) return;
+  requests = Array.isArray(data.requests) ? data.requests : [];
+  renderRequests();
+}
+el('filter-request').onchange = renderRequests;
+el('search-request').oninput = renderRequests;
+el('refresh-requests').onclick = () => loadRequests().catch(error => notify(error.message));
+el('refresh-dashboard').onclick = () => loadDashboard().catch(error => notify(error.message));
 async function loadOmi() {
   const session = token;
   const data = await request('omi').catch(() => null);
@@ -331,9 +414,9 @@ el('login').onsubmit = async (event) => {
     form.reset();
     el('access').hidden = true;
     el('management').hidden = false;
-    showPanel('parametri');
+    showPanel('dashboard');
     notify('');
-    await Promise.all([loadContacts(), loadOrders(), loadReferrers(), loadOmi(), loadFields()]);
+    await Promise.all([loadDashboard(), loadRequests(), loadContacts(), loadOrders(), loadReferrers(), loadOmi(), loadFields()]);
   } catch (error) { notify(error.message); }
   finally { button.disabled = false; }
 };

@@ -5,15 +5,18 @@ import { readFileSync } from 'node:fs';
 const html = readFileSync(new URL('../admin.html', import.meta.url), 'utf8');
 const js = readFileSync(new URL('../admin.js', import.meta.url), 'utf8');
 
-test('reserved admin sidebar lists Parametri, Richieste, Ordini, Segnalatori, Dati OMI in that order', () => {
+test('reserved admin sidebar lists Dashboard, Richieste, Contatti, Ordini, Segnalatori, Parametri, Dati OMI in that order', () => {
   const nav = html.match(/<nav class="sidebar"[\s\S]*?<\/nav>/);
   assert.ok(nav);
   const labels = [...nav[0].matchAll(/<button[^>]*>([^<]+)<\/button>/g)].map(match => match[1]);
-  assert.deepEqual(labels, ['Parametri', 'Richieste', 'Ordini', 'Segnalatori', 'Dati OMI']);
+  assert.deepEqual(labels, ['Dashboard', 'Richieste', 'Contatti', 'Ordini', 'Segnalatori', 'Parametri', 'Dati OMI']);
   assert.match(html, /id="panel-ordini"/);
   assert.match(html, /id="orders"/);
   assert.match(html, /id="panel-parametri"/);
   assert.match(html, /id="panel-richieste"/);
+  assert.match(html, /id="panel-contatti"/);
+  assert.match(html, /id="panel-dashboard"/);
+  assert.match(html, /id="dashboard-cities"/);
   assert.match(html, /id="panel-omi"/);
   assert.match(html, /id="field-search"/);
   assert.match(html, /id="contacts"/);
@@ -27,7 +30,7 @@ test('reserved admin sidebar lists Parametri, Richieste, Ordini, Segnalatori, Da
 test('field search filters by name and OMI browse stays read-only', () => {
   assert.match(js, /fieldQuery/);
   assert.match(js, /omi\/quotes\?/);
-  assert.match(js, /showPanel\('parametri'\)/);
+  assert.match(js, /showPanel\('dashboard'\)/);
   const omi = html.slice(html.indexOf('id="panel-omi"'), html.indexOf('id="status"'));
   assert.match(omi, /Agenzia delle Entrate – OMI/);
   assert.doesNotMatch(omi, /2018-2|semestre|il più recente in archivio/i);

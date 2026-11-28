@@ -7,14 +7,28 @@
 <div class="workspace">
 <nav class="sidebar" aria-label="Sezioni dell’area riservata">
   <p>Sezioni</p>
-  <button type="button" id="nav-parametri" aria-controls="panel-parametri" aria-current="page">Parametri</button>
+  <button type="button" id="nav-dashboard" aria-controls="panel-dashboard" aria-current="page">Dashboard</button>
   <button type="button" id="nav-richieste" aria-controls="panel-richieste">Richieste</button>
+  <button type="button" id="nav-contatti" aria-controls="panel-contatti">Contatti</button>
   <button type="button" id="nav-ordini" aria-controls="panel-ordini">Ordini</button>
   <button type="button" id="nav-segnalatori" aria-controls="panel-segnalatori">Segnalatori</button>
+  <button type="button" id="nav-parametri" aria-controls="panel-parametri">Parametri</button>
   <button type="button" id="nav-omi" aria-controls="panel-omi">Dati OMI</button>
 </nav>
 <div class="panel">
-<article id="panel-parametri">
+<article id="panel-dashboard">
+<div class="top"><h2>Dashboard</h2><div class="toolbar"><button class="outline" id="refresh-dashboard" type="button">Aggiorna</button></div></div>
+<div id="dashboard-stats" class="stats"></div>
+<h3>Richieste per città</h3>
+<div id="dashboard-cities"></div>
+</article>
+<article id="panel-richieste" hidden>
+<div class="top"><h2>Richieste</h2><div class="toolbar"><label>Stato<select id="filter-request"><option value="">Tutte</option><option value="none">Non acquistate</option><option value="pending">Ordine in attesa</option><option value="paid">Pagate</option></select></label><label>Cerca<input id="search-request" type="search" placeholder="Nome, email o città" maxlength="120" autocomplete="off"></label><button class="outline" id="refresh-requests" type="button">Aggiorna</button></div></div>
+<p class="hint">Ogni questionario completato con nome, cognome, email e privacy accettata, anche se il cliente non ha poi pagato. La stima calcolata è visibile solo qui: il cliente la vede dopo il pagamento.</p>
+<p id="request-count" class="hint"></p>
+<div id="requests"></div>
+</article>
+<article id="panel-parametri" hidden>
 <div class="top"><h2>Parametri</h2><div class="toolbar"><button class="outline" id="field-add" type="button">Aggiungi campo</button><button class="outline" id="field-reset" type="button">Ripristina Excel</button><button id="field-save" type="button">Salva i parametri</button></div></div>
 <p class="hint">Campi, risposte e coefficienti già in archivio. Ogni risposta è un plus o minus sulla quotazione OMI della zona (punto medio min/max del semestre in listino). Formula: superficie × €/m² × (1 + somma coefficienti / 100). Le modifiche valgono dal salvataggio, senza un nuovo deploy.</p>
 <label class="search">Cerca per nome<input id="field-search" type="search" placeholder="Nome del campo" maxlength="180" autocomplete="off"></label>
@@ -45,8 +59,8 @@
 </section>
 <datalist id="field-groups"></datalist>
 </article>
-<article id="panel-richieste" hidden>
-<div class="top"><h2>Richieste</h2><div class="toolbar"><label>Stato<select id="filter-status"><option value="">Tutte</option><option value="new">Nuove</option><option value="contacted">Contattate</option><option value="closed">Chiuse</option></select></label><button class="outline" id="refresh" type="button">Aggiorna</button></div></div>
+<article id="panel-contatti" hidden>
+<div class="top"><h2>Contatti</h2><div class="toolbar"><label>Stato<select id="filter-status"><option value="">Tutte</option><option value="new">Nuove</option><option value="contacted">Contattate</option><option value="closed">Chiuse</option></select></label><button class="outline" id="refresh" type="button">Aggiorna</button></div></div>
 <p class="hint">Stime con recapiti, messaggi di contatto e richieste di copertura. Puoi aggiornare stato e note.</p>
 <div id="contacts"></div>
 </article>

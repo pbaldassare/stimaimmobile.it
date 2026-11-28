@@ -14,3 +14,7 @@ td.num,th.num{text-align:right;font-variant-numeric:tabular-nums;white-space:now
 @media(max-width:800px){.editor{grid-template-columns:1fr}.workspace{grid-template-columns:1fr}.sidebar{position:static;grid-template-columns:repeat(3,minmax(0,1fr))}.sidebar p{display:none}.sidebar button{text-align:center;padding:.6rem .35rem}}
 [hidden]{display:none!important} :focus-visible{outline:3px solid #ad7512;outline-offset:3px}
 .coupons th,.coupons td,.coupons button{white-space:nowrap}.coupons input[name=code]{width:9rem}.coupons input[name=discount],.coupons input[name=maxUses]{width:6rem}
+.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(10rem,1fr));gap:.8rem;margin-bottom:1.5rem}.stat{background:#f4f7f5;border:1px solid #d8dedb;border-radius:.8rem;padding:.9rem 1rem;display:grid;gap:.2rem}.stat span{font-size:.85rem;color:#3d5552}.stat strong{font-size:1.6rem;color:#076b60}
+.city-row{display:grid;grid-template-columns:minmax(7rem,12rem) 1fr 3rem;gap:.7rem;align-items:center;padding:.3rem 0}.city-track{background:#eef2f0;border-radius:99px;height:.6rem;overflow:hidden}.city-bar{display:block;height:100%;background:#076b60;border-radius:99px}.city-row strong{text-align:right}.city-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.qa{display:grid;grid-template-columns:minmax(10rem,1fr) 2fr;gap:.25rem 1rem;margin:.6rem 0}.qa dt{color:#3d5552}.qa dd{margin:0;font-weight:600}
+@media(max-width:800px){.sidebar{grid-template-columns:repeat(auto-fill,minmax(7rem,1fr))}}
