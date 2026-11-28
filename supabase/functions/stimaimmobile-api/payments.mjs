@@ -3,6 +3,21 @@ export const CURRENCY = "eur";
 export const PRODUCT_NAME = "Valutazione immobiliare · StimaImmobile.it";
 export const ORDER_STATUSES = ["pending", "paid", "cancelled", "refunded"];
 
+export function normalizeCode(value) {
+  const code = typeof value === "string" ? value.trim().toUpperCase() : "";
+  return /^[A-Z0-9-]{3,32}$/.test(code) ? code : "";
+}
+
+// Euro discount codes. `uses` counts paid orders; `today` is YYYY-MM-DD (Europe/Rome).
+export function applyCoupon(coupon, { uses = 0, today, price = PRICE_CENTS } = {}) {
+  if (!coupon || !coupon.active || coupon.referrer_active === false) return { valid: false, error: "Codice sconto non valido." };
+  const until = coupon.valid_until ? String(coupon.valid_until instanceof Date ? coupon.valid_until.toISOString() : coupon.valid_until).slice(0, 10) : "";
+  if (until && today > until) return { valid: false, error: "Codice sconto scaduto." };
+  if (coupon.max_uses != null && uses >= Number(coupon.max_uses)) return { valid: false, error: "Codice sconto esaurito." };
+  const discount = Math.min(price, Number(coupon.discount_cents));
+  return { valid: true, discount, amount: price - discount, price };
+}
+
 // Stripe Checkout Session as application/x-www-form-urlencoded body.
 export function checkoutForm({ orderId, email, siteUrl, amount = PRICE_CENTS }) {
   const site = siteUrl.replace(/\/+$/, "");

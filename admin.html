@@ -10,6 +10,7 @@
   <button type="button" id="nav-parametri" aria-controls="panel-parametri" aria-current="page">Parametri</button>
   <button type="button" id="nav-richieste" aria-controls="panel-richieste">Richieste</button>
   <button type="button" id="nav-ordini" aria-controls="panel-ordini">Ordini</button>
+  <button type="button" id="nav-segnalatori" aria-controls="panel-segnalatori">Segnalatori</button>
   <button type="button" id="nav-omi" aria-controls="panel-omi">Dati OMI</button>
 </nav>
 <div class="panel">
@@ -53,6 +54,19 @@
 <div class="top"><h2>Ordini</h2><div class="toolbar"><label>Stato<select id="filter-order"><option value="">Tutti</option><option value="pending">In attesa</option><option value="paid">Pagati</option><option value="refunded">Rimborsati</option><option value="cancelled">Annullati</option></select></label><button class="outline" id="refresh-orders" type="button">Aggiorna</button></div></div>
 <p class="hint">Valutazioni acquistate dai clienti. Stripe segna come pagati gli ordini in automatico; qui puoi registrare a mano un pagamento (es. bonifico), un rimborso o un annullamento. Segnare «Pagato» sblocca la valutazione nell’area del cliente e gli invia la mail.</p>
 <div id="orders"></div>
+</article>
+<article id="panel-segnalatori" hidden>
+<div class="top"><h2>Segnalatori</h2><div class="toolbar"><button class="outline" id="refresh-referrers" type="button">Aggiorna</button></div></div>
+<p class="hint">Ogni segnalatore ha un accesso suo (pagina /segnalatore/) e uno o più codici sconto in euro. Vede i propri codici e, per ogni utilizzo, email del cliente, data, importo e stato. Scadenza e utilizzi massimi sono facoltativi: vuoti = senza limite. Gli utilizzi contano gli ordini pagati.</p>
+<form id="referrer-new" class="editor">
+  <h3 class="full">Nuovo segnalatore</h3>
+  <label>Nome<input name="name" required maxlength="120"></label>
+  <label>Email di accesso<input name="email" type="email" required maxlength="254" autocomplete="off"></label>
+  <label>Password iniziale<input name="password" type="text" required minlength="8" autocomplete="new-password"></label>
+  <label>Note<input name="notes" maxlength="4000"></label>
+  <div class="form-actions"><button type="submit">Crea segnalatore</button></div>
+</form>
+<div id="referrers"></div>
 </article>
 <article id="panel-omi" hidden>
 <div class="top"><h2>Dati OMI</h2></div>

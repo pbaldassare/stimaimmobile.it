@@ -9,13 +9,14 @@ let reviewed = '';
 let reviewVersion = 0;
 let contacts = [];
 let orders = [];
+let referrers = [];
 let modelFields = [];
 let editingIndex = -1;
 let fieldQuery = '';
 let omiOffset = 0;
 let comuniLoaded = false;
 const OMI_PAGE = 80;
-const PANELS = ['parametri', 'richieste', 'ordini', 'omi'];
+const PANELS = ['parametri', 'richieste', 'ordini', 'segnalatori', 'omi'];
 const CONTROL = { select: 'Tendina', yesno: 'Sì / No', count: 'Conteggio 0–N', number: 'Numero' };
 const euroFormat = new Intl.NumberFormat('it-IT', { minimumFractionDigits: 0, maximumFractionDigits: 2 });
 
@@ -37,6 +38,8 @@ function signOut() {
   el('contacts').replaceChildren();
   orders = [];
   el('orders').replaceChildren();
+  referrers = [];
+  el('referrers').replaceChildren();
   el('issues').replaceChildren();
   el('rows').replaceChildren();
   el('field-rows').replaceChildren();
@@ -144,7 +147,7 @@ function renderOrders() {
     head.className = 'request-head';
     head.append(node('span', ORDER_STATUS[order.status] || order.status, 'badge'), node('strong', order.email));
     const place = [order.address, [order.comune, order.zona, order.destinazione].filter(Boolean).join(' · ')].filter(Boolean).join(' — ');
-    const value = order.result ? ' · valore ' + euro.format(order.result.value) : '';
+    const value = (order.result ? ' · valore ' + euro.format(order.result.value) : '') + (order.coupon ? ' · codice ' + order.coupon + ' (−' + euro.format(order.discount) + ')' : '');
     form.append(head,
       node('p', new Date(order.createdAt).toLocaleString('it-IT') + ' · ' + euro.format(order.amount) + (order.stripe ? ' · Stripe' : '') + value),
       node('p', place));
@@ -185,6 +188,118 @@ async function loadOrders() {
 }
 el('filter-order').onchange = renderOrders;
 el('refresh-orders').onclick = () => loadOrders().catch(error => notify(error.message));
+function input(name, value, attrs = {}) {
+  const item = document.createElement('input');
+  item.name = name;
+  if (attrs.type === 'checkbox') item.checked = Boolean(value); else item.value = value ?? '';
+  for (const [key, val] of Object.entries(attrs)) item.setAttribute(key, val);
+  return item;
+}
+function labelled(text, control, className) {
+  const label = node('label', text, className);
+  label.append(control);
+  return label;
+}
+function couponRow(referrer, coupon = {}) {
+  const tr = document.createElement('tr');
+  const cells = {
+    code: input('code', coupon.code, { maxlength: '32', placeholder: coupon.id ? '' : 'automatico', 'aria-label': 'Codice' }),
+    discount: input('discount', coupon.discount ?? '', { inputmode: 'decimal', required: '', 'aria-label': 'Sconto in euro' }),
+    validUntil: input('validUntil', coupon.validUntil ? String(coupon.validUntil).slice(0, 10) : '', { type: 'date', 'aria-label': 'Scadenza' }),
+    maxUses: input('maxUses', coupon.maxUses ?? '', { inputmode: 'numeric', placeholder: 'illimitati', 'aria-label': 'Utilizzi massimi' }),
+    active: input('active', coupon.id ? coupon.active : true, { type: 'checkbox', 'aria-label': 'Attivo' }),
+  };
+  for (const key of ['code', 'discount', 'validUntil', 'maxUses']) { const td = document.createElement('td'); td.append(cells[key]); tr.append(td); }
+  tr.append(node('td', coupon.id ? String(coupon.uses ?? 0) : '–', 'num'));
+  const activeCell = document.createElement('td'); activeCell.append(cells.active); tr.append(activeCell);
+  const save = node('button', coupon.id ? 'Salva' : 'Aggiungi');
+  save.type = 'button';
+  const actions = document.createElement('td'); actions.append(save); tr.append(actions);
+  save.onclick = async () => {
+    save.disabled = true;
+    notify('Salvataggio del coupon…');
+    try {
+      await request('coupon', { id: coupon.id, referrerId: referrer.id, code: cells.code.value, discount: cells.discount.value,
+        validUntil: cells.validUntil.value, maxUses: cells.maxUses.value, active: cells.active.checked });
+      notify('Coupon salvato.');
+      await loadReferrers();
+    } catch (error) { notify(error.message); save.disabled = false; }
+  };
+  return tr;
+}
+function renderReferrers() {
+  const target = el('referrers');
+  target.replaceChildren();
+  if (!referrers.length) { target.append(node('p', 'Nessun segnalatore. Creane uno con il modulo qui sopra.')); return; }
+  for (const referrer of referrers) {
+    const box = document.createElement('section');
+    box.className = 'request';
+    const head = document.createElement('div');
+    head.className = 'request-head';
+    head.append(node('span', referrer.active ? 'Attivo' : 'Disattivato', 'badge'), node('strong', referrer.name));
+    box.append(head, node('p', referrer.email + ' · creato il ' + new Date(referrer.created_at).toLocaleDateString('it-IT')));
+    const form = document.createElement('form');
+    form.className = 'editor';
+    const name = input('name', referrer.name, { required: '', maxlength: '120' });
+    const notes = input('notes', referrer.notes, { maxlength: '4000' });
+    const password = input('password', '', { minlength: '8', placeholder: 'lascia vuoto per non cambiarla', autocomplete: 'new-password' });
+    const active = input('active', referrer.active, { type: 'checkbox' });
+    const save = node('button', 'Salva segnalatore');
+    save.type = 'submit';
+    const actions = document.createElement('div');
+    actions.className = 'form-actions';
+    actions.append(save);
+    form.append(labelled('Nome', name), labelled('Note', notes), labelled('Nuova password', password), labelled(' Attivo', active, 'check'), actions);
+    form.onsubmit = async event => {
+      event.preventDefault();
+      save.disabled = true;
+      notify('Salvataggio del segnalatore…');
+      try {
+        await request('referrer', { id: referrer.id, name: name.value, notes: notes.value, password: password.value, active: active.checked });
+        notify(password.value ? 'Segnalatore salvato e password aggiornata.' : 'Segnalatore salvato.');
+        await loadReferrers();
+      } catch (error) { notify(error.message); save.disabled = false; }
+    };
+    const table = document.createElement('table');
+    table.className = 'coupons';
+    const thead = document.createElement('thead');
+    const headRow = document.createElement('tr');
+    for (const label of ['Codice', 'Sconto €', 'Scadenza', 'Utilizzi max', 'Usato', 'Attivo', '']) headRow.append(node('th', label));
+    thead.append(headRow);
+    const tbody = document.createElement('tbody');
+    for (const coupon of referrer.coupons || []) tbody.append(couponRow(referrer, coupon));
+    tbody.append(couponRow(referrer));
+    table.append(thead, tbody);
+    const scroll = document.createElement('div');
+    scroll.className = 'scroll';
+    scroll.append(table);
+    box.append(form, node('h4', 'Codici sconto'), scroll);
+    target.append(box);
+  }
+}
+async function loadReferrers() {
+  const session = token;
+  const data = await request('referrers');
+  if (token !== session) return;
+  referrers = Array.isArray(data.referrers) ? data.referrers : [];
+  renderReferrers();
+}
+el('refresh-referrers').onclick = () => loadReferrers().catch(error => notify(error.message));
+el('referrer-new').onsubmit = async event => {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const button = form.querySelector('button');
+  const values = Object.fromEntries(new FormData(form));
+  button.disabled = true;
+  notify('Creazione del segnalatore…');
+  try {
+    await request('referrer', values);
+    form.reset();
+    notify('Segnalatore creato. Comunicagli email e password: accede da /segnalatore/.');
+    await loadReferrers();
+  } catch (error) { notify(error.message); }
+  finally { button.disabled = false; }
+};
 async function loadOmi() {
   const session = token;
   const data = await request('omi').catch(() => null);
@@ -218,7 +333,7 @@ el('login').onsubmit = async (event) => {
     el('management').hidden = false;
     showPanel('parametri');
     notify('');
-    await Promise.all([loadContacts(), loadOrders(), loadOmi(), loadFields()]);
+    await Promise.all([loadContacts(), loadOrders(), loadReferrers(), loadOmi(), loadFields()]);
   } catch (error) { notify(error.message); }
   finally { button.disabled = false; }
 };

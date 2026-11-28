@@ -8,7 +8,7 @@ import { OMI_FONTE, OMI_LICENSE } from "../../../engine/omi.mjs";
 import { previewCatalog } from "./catalog.mjs";
 import { addressCandidates } from "./geocoding.mjs";
 import { isEmail, requestKind, sendThankYou, sendOrderReady, MAIL_FROM, STATUSES } from "./mail.mjs";
-import { checkoutForm, verifyStripeSignature, PRICE_CENTS, CURRENCY, ORDER_STATUSES } from "./payments.mjs";
+import { checkoutForm, verifyStripeSignature, PRICE_CENTS, CURRENCY, ORDER_STATUSES, applyCoupon, normalizeCode } from "./payments.mjs";
 
 const cors = {
   "Access-Control-Allow-Origin": "*",
@@ -20,6 +20,7 @@ const cors = {
 };
 const url = Deno.env.get("SUPABASE_URL")!;
 const key = Deno.env.get("SUPABASE_ANON_KEY")!;
+const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || "";
 const SITE_URL = (Deno.env.get("STIMAIMMOBILE_SITE_URL") || "https://stimaimmobile-it.pages.dev").replace(/\/+$/, "");
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const db = postgres(Deno.env.get("SUPABASE_DB_URL")!, {
@@ -141,11 +142,46 @@ async function notifyOrderReady(email: string) {
     console.error("Resend order mail failed", error instanceof Error ? error.name : "unknown");
   }
 }
+function romeToday() {
+  return new Intl.DateTimeFormat("en-CA", { timeZone: "Europe/Rome" }).format(new Date());
+}
+// shortcut: max_uses counts paid orders only, so two checkouts racing on the last use can both pass; add a reservation if it matters.
+async function couponFor(tx: postgres.TransactionSql, raw: unknown) {
+  if (raw === undefined || raw === null || raw === "") return null;
+  const code = normalizeCode(raw);
+  if (!code) throw new HttpError(422, "Codice sconto non valido.");
+  const [coupon] = await tx`select c.*, r.active as referrer_active from stimaimmobile.coupons c
+    join stimaimmobile.referrers r on r.id = c.referrer_id where c.code = ${code}`;
+  const uses = coupon
+    ? (await tx`select count(*)::int as n from stimaimmobile.orders where coupon_id = ${coupon.id} and status = 'paid'`)[0].n
+    : 0;
+  const applied = applyCoupon(coupon, { uses, today: romeToday() });
+  if (!applied.valid) throw new HttpError(422, applied.error);
+  return { ...applied, id: coupon.id as string, code };
+}
+async function requireReferrer(token: string) {
+  const user = await requireUser(token);
+  const [referrer] = await scope(tx => tx`select * from stimaimmobile.referrers where user_id = ${user.id}::uuid and active`);
+  if (!referrer) throw new HttpError(403, "Account non abilitato come segnalatore.");
+  return referrer;
+}
+async function authAdmin(path: string, method: string, body: unknown) {
+  if (!serviceKey) throw new HttpError(503, "Creazione account non disponibile.");
+  return fetch(url + "/auth/v1/admin/" + path, { method,
+    headers: { apikey: serviceKey, Authorization: "Bearer " + serviceKey, "Content-Type": "application/json" },
+    body: JSON.stringify(body) });
+}
+function randomCode() {
+  const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+  return Array.from(crypto.getRandomValues(new Uint8Array(8)), b => alphabet[b % alphabet.length]).join("");
+}
 function orderView(row: Record<string, any>) {
   const s = row.snapshot || {}, paid = row.status === "paid";
   return {
     id: row.id, status: row.status, createdAt: row.created_at, paidAt: row.paid_at,
     amount: row.amount_cents / 100, currency: row.currency,
+    listPrice: (row.list_price_cents ?? row.amount_cents) / 100, discount: (row.discount_cents || 0) / 100,
+    coupon: row.coupon_code || null,
     comune: s.comune, zona: s.zona, destinazione: s.destinazione, address: s.address || "",
     surface: s.result?.surface, partial: Boolean(s.result?.warnings?.length),
     // Value fields are released only after payment.
@@ -345,12 +381,21 @@ async function handle(req: Request): Promise<Response> {
     if (data.privacy !== true) throw new HttpError(422, "Accetta l’informativa privacy per procedere.");
     if (data.consent !== true) throw new HttpError(422, "Conferma la richiesta di consegna immediata per procedere.");
     const order = await scope(async tx => {
+      const coupon = await couponFor(tx, data.coupon);
       const { snapshot } = await buildSnapshot(tx, data);
       Object.assign(snapshot, { privacyAcceptedAt: new Date().toISOString(), privacyVersion: "2026-11-28" });
-      const [row] = await tx`insert into stimaimmobile.orders(user_id,email,snapshot,amount_cents,currency,consent_at)
-        values(${user.id}::uuid,${user.email},${tx.json(snapshot)},${PRICE_CENTS},${CURRENCY},now()) returning *`;
+      const amount = coupon ? coupon.amount : PRICE_CENTS;
+      const free = amount === 0;
+      const [row] = await tx`insert into stimaimmobile.orders(user_id,email,snapshot,amount_cents,currency,consent_at,
+          coupon_id,list_price_cents,discount_cents,status,paid_at)
+        values(${user.id}::uuid,${user.email},${tx.json(snapshot)},${amount},${CURRENCY},now(),
+          ${coupon?.id ?? null},${PRICE_CENTS},${coupon?.discount ?? 0},${free ? "paid" : "pending"},${free ? new Date() : null}) returning *`;
       return row;
     });
+    if (order.status === "paid") {
+      await notifyOrderReady(user.email);
+      return json({ order: orderView(order), checkoutUrl: null, paid: true }, 201);
+    }
     const checkoutUrl = await startCheckout(order.id, user.email, order.amount_cents);
     return json({ order: orderView(order), checkoutUrl }, 201);
   }
@@ -373,6 +418,39 @@ async function handle(req: Request): Promise<Response> {
       values(${name},${email},${message},${area.comune},${area.zona},${area.destinazione},${kind})`);
     await notifyThankYou(name, email);
     return json({ received:true }, 201);
+  }
+  if (route === "POST /coupon/check") {
+    const data = await readBody(req, 2048);
+    const coupon = await scope(tx => couponFor(tx, data.code));
+    if (!coupon) throw new HttpError(422, "Inserisci un codice sconto.");
+    return json({ code: coupon.code, discount: coupon.discount / 100, amount: coupon.amount / 100, price: PRICE_CENTS / 100 });
+  }
+  if (route === "POST /referrer/login") {
+    const { email, password } = credentials(await readBody(req, 8192));
+    const auth = await fetch(url + "/auth/v1/token?grant_type=password", { method:"POST",
+      headers:{ apikey:key, "Content-Type":"application/json" }, body:JSON.stringify({ email, password }) });
+    if (!auth.ok) throw authError(auth.status, "Accesso non riuscito. Verifica email e password.");
+    const session = await auth.json();
+    await requireReferrer(session.access_token);
+    return json({ access_token:session.access_token, expires_in:session.expires_in, email });
+  }
+  if (route === "GET /referrer/me") {
+    const referrer = await requireReferrer(bearer(req));
+    const [coupons, orders] = await scope(tx => Promise.all([
+      tx`select c.code, c.discount_cents, c.active, c.valid_until::text, c.max_uses,
+          (select count(*)::int from stimaimmobile.orders o where o.coupon_id = c.id and o.status = 'paid') as uses
+        from stimaimmobile.coupons c where c.referrer_id = ${referrer.id} order by c.created_at desc`,
+      // Customers who used this referrer's codes: email, date, amount and status only (no property data).
+      tx`select o.created_at, o.email, o.amount_cents, o.status, c.code
+        from stimaimmobile.orders o join stimaimmobile.coupons c on c.id = o.coupon_id
+        where c.referrer_id = ${referrer.id} and o.status <> 'cancelled' order by o.created_at desc limit 500`,
+    ]));
+    return json({
+      name: referrer.name,
+      coupons: coupons.map(c => ({ code: c.code, discount: c.discount_cents / 100, active: c.active,
+        validUntil: c.valid_until, maxUses: c.max_uses, uses: c.uses })),
+      orders: orders.map(o => ({ createdAt: o.created_at, email: o.email, amount: o.amount_cents / 100, status: o.status, code: o.code })),
+    });
   }
   if (route === "POST /account/signup" || route === "POST /account/login") {
     const { email, password } = credentials(await readBody(req, 8192));
@@ -473,8 +551,87 @@ async function handle(req: Request): Promise<Response> {
         from stimaimmobile.contacts order by created_at desc limit 200`);
       return json({ contacts });
     }
+    if (route === "GET /admin/referrers") {
+      const referrers = await scope(tx => tx`
+        select r.id, r.name, r.email, r.active, r.notes, r.created_at,
+          coalesce(json_agg(json_build_object('id', c.id, 'code', c.code, 'discount', c.discount_cents / 100.0,
+            'active', c.active, 'validUntil', c.valid_until, 'maxUses', c.max_uses,
+            'uses', (select count(*) from stimaimmobile.orders o where o.coupon_id = c.id and o.status = 'paid'))
+            order by c.created_at desc) filter (where c.id is not null), '[]') as coupons
+        from stimaimmobile.referrers r left join stimaimmobile.coupons c on c.referrer_id = r.id
+        group by r.id order by r.created_at desc`);
+      return json({ referrers });
+    }
+    if (route === "POST /admin/referrer") {
+      const data = await readBody(req, 8192);
+      const name = field(data.name, "nome", 120);
+      const notes = field(data.notes, "note", 4000, false);
+      const active = data.active !== false;
+      const password = typeof data.password === "string" ? data.password : "";
+      if (password && (password.length < 8 || password.length > 4096)) throw new HttpError(422, "La password deve avere almeno 8 caratteri.");
+      if (data.id) {
+        const id = field(data.id, "segnalatore", 36);
+        if (!UUID.test(id)) throw new HttpError(422, "Segnalatore non valido.");
+        const [referrer] = await scope(tx => tx`update stimaimmobile.referrers set name=${name}, notes=${notes}, active=${active}, updated_at=now()
+          where id=${id}::uuid returning *`);
+        if (!referrer) throw new HttpError(404, "Segnalatore non trovato.");
+        if (password) {
+          const auth = await authAdmin("users/" + referrer.user_id, "PUT", { password });
+          if (!auth.ok) throw new HttpError(422, "Password non aggiornata. Scegline una diversa.");
+        }
+        return json({ referrer });
+      }
+      const email = field(data.email, "email", 254);
+      if (!isEmail(email)) throw new HttpError(422, "Inserisci un indirizzo email valido.");
+      if (!password) throw new HttpError(422, "Scegli una password iniziale di almeno 8 caratteri.");
+      const auth = await authAdmin("users", "POST", { email, password, email_confirm: true });
+      if (!auth.ok) throw new HttpError(auth.status === 422 ? 409 : 503, auth.status === 422
+        ? "Esiste già un account con questa email: usa un altro indirizzo."
+        : "Creazione dell’account non riuscita. Riprova.");
+      const user = await auth.json();
+      const [referrer] = await scope(tx => tx`insert into stimaimmobile.referrers(user_id,name,email,notes,active)
+        values(${user.id}::uuid,${name},${email},${notes},${active}) returning *`);
+      return json({ referrer }, 201);
+    }
+    if (route === "POST /admin/coupon") {
+      const data = await readBody(req, 4096);
+      const discount = Math.round(Number(String(data.discount ?? "").replace(",", ".")) * 100);
+      if (!Number.isSafeInteger(discount) || discount <= 0 || discount > PRICE_CENTS)
+        throw new HttpError(422, "Inserisci uno sconto in euro tra 0,01 e " + (PRICE_CENTS / 100) + ".");
+      const validUntil = field(data.validUntil, "scadenza", 10, false);
+      if (validUntil && !/^\d{4}-\d{2}-\d{2}$/.test(validUntil)) throw new HttpError(422, "Scadenza non valida.");
+      const maxRaw = String(data.maxUses ?? "").trim();
+      const maxUses = maxRaw ? Number(maxRaw) : null;
+      if (maxUses !== null && (!Number.isInteger(maxUses) || maxUses < 1 || maxUses > 1000000)) throw new HttpError(422, "Utilizzi massimi non validi.");
+      const active = data.active !== false;
+      const code = data.code ? normalizeCode(data.code) : randomCode();
+      if (!code) throw new HttpError(422, "Il codice può contenere solo lettere, numeri e trattini (da 3 a 32).");
+      try {
+        if (data.id) {
+          const id = field(data.id, "coupon", 36);
+          if (!UUID.test(id)) throw new HttpError(422, "Coupon non valido.");
+          const [coupon] = await scope(tx => tx`update stimaimmobile.coupons set code=${code}, discount_cents=${discount},
+            active=${active}, valid_until=${validUntil || null}, max_uses=${maxUses}, updated_at=now()
+            where id=${id}::uuid returning *`);
+          if (!coupon) throw new HttpError(404, "Coupon non trovato.");
+          return json({ coupon });
+        }
+        const referrerId = field(data.referrerId, "segnalatore", 36);
+        if (!UUID.test(referrerId)) throw new HttpError(422, "Segnalatore non valido.");
+        const [coupon] = await scope(tx => tx`insert into stimaimmobile.coupons(code,referrer_id,discount_cents,active,valid_until,max_uses)
+          values(${code},${referrerId}::uuid,${discount},${active},${validUntil || null},${maxUses}) returning *`);
+        return json({ coupon }, 201);
+      } catch (error) {
+        if (typeof error === "object" && error && "code" in error && String(error.code) === "23505")
+          throw new HttpError(409, "Questo codice esiste già: scegline un altro.");
+        if (typeof error === "object" && error && "code" in error && String(error.code) === "23503")
+          throw new HttpError(404, "Segnalatore non trovato.");
+        throw error;
+      }
+    }
     if (route === "GET /admin/orders") {
-      const rows = await scope(tx => tx`select * from stimaimmobile.orders order by created_at desc limit 200`);
+      const rows = await scope(tx => tx`select o.*, c.code as coupon_code from stimaimmobile.orders o
+        left join stimaimmobile.coupons c on c.id = o.coupon_id order by o.created_at desc limit 200`);
       return json({ orders: rows.map(row => ({ ...orderView(row), email: row.email, notes: row.notes,
         stripe: Boolean(row.stripe_session_id) })) });
     }
@@ -491,7 +648,7 @@ async function handle(req: Request): Promise<Response> {
       const [order] = await scope(tx => tx`update stimaimmobile.orders
         set status=${status}, notes=${notes}, updated_at=now(),
             paid_at=case when ${status}='paid' then coalesce(paid_at, now()) else paid_at end
-        where id=${id}::uuid returning *`);
+        where id=${id}::uuid returning *, (select code from stimaimmobile.coupons where id = coupon_id) as coupon_code`);
       if (before.status !== "paid" && status === "paid") await notifyOrderReady(order.email);
       return json({ order: { ...orderView(order), email: order.email, notes: order.notes, stripe: Boolean(order.stripe_session_id) } });
     }

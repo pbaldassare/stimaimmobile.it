@@ -115,3 +115,5 @@ select{appearance:none;padding-right:2.3rem;background-image:url("data:image/svg
 .foot-brand{display:grid;gap:.35rem}.foot-brand .payoff{font-size:.9rem}
 @media(max-width:1200px){.head-inner .payoff{display:none}}
 #checkout .form-grid,#checkout>.choice{display:flex;margin-block:1rem}#checkout .form-grid{display:grid}
+.table-scroll{overflow-x:auto}.data-table{width:100%;border-collapse:collapse;font-size:.92rem}.data-table th,.data-table td{text-align:left;padding:.55rem .6rem;border-bottom:1px solid var(--line);white-space:nowrap}.data-table th{color:var(--muted);font-weight:600}
+.result-value s{font-size:.55em;font-weight:400}

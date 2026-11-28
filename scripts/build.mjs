@@ -6,7 +6,7 @@ import { makePdf } from '../engine/pdf.mjs';
 const root = fileURLToPath(new URL('../', import.meta.url));
 const destination = path.join(root, 'dist');
 await mkdir(destination, { recursive: true });
-for (const name of ['index.html', 'style.css', 'app.js', 'api-client.js', 'nav.js', 'admin.html', 'admin.css', 'admin.js', 'assets', 'faq', 'blog', 'account', 'privacy']) {
+for (const name of ['index.html', 'style.css', 'app.js', 'api-client.js', 'nav.js', 'admin.html', 'admin.css', 'admin.js', 'assets', 'faq', 'blog', 'account', 'privacy', 'segnalatore']) {
   await cp(path.join(root, name), path.join(destination, name), { recursive: true });
 }
 await copyFile(path.join(root, 'data/modello-listino.csv'), path.join(destination, 'modello-listino.csv'));

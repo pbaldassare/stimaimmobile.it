@@ -13,3 +13,4 @@ tr.selected{background:#e7f0ea}#field-editor{margin-top:1.6rem;padding-top:1rem;
 td.num,th.num{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
 @media(max-width:800px){.editor{grid-template-columns:1fr}.workspace{grid-template-columns:1fr}.sidebar{position:static;grid-template-columns:repeat(3,minmax(0,1fr))}.sidebar p{display:none}.sidebar button{text-align:center;padding:.6rem .35rem}}
 [hidden]{display:none!important} :focus-visible{outline:3px solid #ad7512;outline-offset:3px}
+.coupons th,.coupons td,.coupons button{white-space:nowrap}.coupons input[name=code]{width:9rem}.coupons input[name=discount],.coupons input[name=maxUses]{width:6rem}

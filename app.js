@@ -8,7 +8,7 @@ const money = new Intl.NumberFormat('it-IT', {style:'currency', currency:'EUR'})
 const number = new Intl.NumberFormat('it-IT', {maximumFractionDigits:3});
 const titles = {home:'Il valore reale in un click', metodo:'Metodo', zone:'Zone servite', contatti:'Contatti', valutazione:'Valuta il tuo immobile', ordine:'Riepilogo e pagamento'};
 let zones = [], comuni = [], zonesByCity = new Map(), allZonesLoaded = false, listino = null, comuniPending;
-let questions = [], answers = {}, step = 0, wizard = false, quote = null, orderInputs = null, price = 49, checking = false;
+let questions = [], answers = {}, step = 0, wizard = false, quote = null, orderInputs = null, price = 49, coupon = null, checking = false;
 let place = {comune:'', zona:'', destinazione:''};
 let recapiti = {name:'', email:''};
 let renderId = 0;
@@ -92,7 +92,7 @@ function go(name) {
 }
 function focusPage(){document.querySelector('#main').focus({preventScroll:true});window.scrollTo(0,0)}
 function resetEstimate(city=''){
-  place={comune:city,zona:'',destinazione:''}; recapiti={name:'',email:''}; answers={}; wizard=false; step=0; quote=null; orderInputs=null; checking=false;
+  place={comune:city,zona:'',destinazione:''}; recapiti={name:'',email:''}; answers={}; wizard=false; step=0; quote=null; orderInputs=null; coupon=null; checking=false;
 }
 function startExcelExample(){
   resetEstimate(EXAMPLE_PLACE.comune);
@@ -342,7 +342,10 @@ function orderPage(){
     '<article class="panel"><details><summary><strong>Dati dichiarati</strong> ('+Object.keys(orderInputs).length+' risposte)</summary><dl class="metrics">'+answerRows()+'</dl></details>'+
     (warnings.length?'<div class="notice"><strong>Stima parziale</strong><p>Alcuni dati non hanno un coefficiente nel modello: la relazione lo indicherà.</p><ul>'+warnings.map(w=>'<li>'+esc(w)+'</li>').join('')+'</ul></div>':'')+
     '<button type="button" class="btn secondary" id="edit">Modifica le risposte</button></article>'+
-    '<article class="panel"><h2>Valutazione con relazione PDF</h2><p class="result-value">'+money.format(price)+'</p><p class="muted">Valore stimato, minimo indicativo, quotazione di zona, correttivi e relazione PDF scaricabile dalla tua area personale.</p></article>'+
+    '<article class="panel"><h2>Valutazione con relazione PDF</h2><p class="result-value">'+(coupon?'<s class="muted">'+money.format(price)+'</s> ':'')+money.format(coupon?coupon.amount:price)+'</p><p class="muted">Valore stimato, minimo indicativo, quotazione di zona, correttivi e relazione PDF scaricabile dalla tua area personale.</p>'+
+    '<form id="coupon-form">'+(coupon
+      ?'<p class="notice">Codice <strong>'+esc(coupon.code)+'</strong> applicato: sconto di '+money.format(coupon.discount)+'. <button type="button" class="text-link" id="coupon-remove">Rimuovi</button></p>'
+      :'<div class="form-grid">'+field('o-coupon','Codice sconto','<input id="o-coupon" class="input" name="code" maxlength="32" autocomplete="off" autocapitalize="characters">')+'</div><div class="form-actions"><button class="btn secondary" type="submit">Applica</button></div>')+errorBox()+'</form></article>'+
     '<form id="checkout" class="panel"><h2>'+(session?'Account':'Accedi o crea un account')+'</h2>'+
     (session?'<p class="muted">Accesso come <strong>'+esc(session.email||'utente')+'</strong> · <button type="button" class="text-link" id="switch-user">Cambia account</button></p>'
       :'<div class="choice-row" role="radiogroup" aria-label="Accesso"><label class="choice"><input type="radio" name="mode" value="signup" checked> Nuovo cliente</label><label class="choice"><input type="radio" name="mode" value="login"> Ho già un account</label></div><div class="form-grid">'+
@@ -351,7 +354,15 @@ function orderPage(){
     // TODO legale: testo definitivo di termini di vendita e rinuncia al recesso da far validare.
     '<label class="choice"><input type="checkbox" name="privacy" required> Ho letto l’<a class="text-link" href="/privacy/" target="_blank" rel="noopener">informativa privacy</a> e acconsento al trattamento dei dati per la valutazione.</label>'+
     '<label class="choice"><input type="checkbox" name="consent" required> Chiedo la consegna immediata della valutazione e prendo atto che, una volta resa disponibile, perdo il diritto di recesso.</label>'+
-    errorBox()+'<div class="form-actions"><button class="btn" type="submit">Paga '+money.format(price)+'</button></div></form>';
+    errorBox()+'<div class="form-actions"><button class="btn" type="submit">'+(coupon&&coupon.amount===0?'Conferma l’ordine gratuito':'Paga '+money.format(coupon?coupon.amount:price))+'</button></div></form>';
+  document.querySelector('#coupon-remove')?.addEventListener('click',()=>{coupon=null;orderPage()});
+  const couponForm=document.querySelector('#coupon-form');
+  couponForm.addEventListener('submit',async e=>{
+    e.preventDefault();const btn=couponForm.querySelector('button[type=submit]'),status=couponForm.querySelector('.error');
+    status.textContent='';btn.disabled=true;
+    try{coupon=await apiJson('/api/coupon/check',{code:couponForm.querySelector('#o-coupon').value});orderPage();document.querySelector('#coupon-form').scrollIntoView({block:'center'})}
+    catch(err){status.textContent=err.message;btn.disabled=false}
+  });
   document.querySelector('#edit').addEventListener('click',()=>{wizard=true;step=0;go('valutazione')});
   document.querySelector('#switch-user')?.addEventListener('click',()=>{clearSession();orderPage()});
   const form=document.querySelector('#checkout');
@@ -366,8 +377,8 @@ function orderPage(){
         if(auth.confirm){status.textContent='Ti abbiamo inviato una email di conferma: apri il link, poi torna qui e scegli «Ho già un account».';btn.disabled=false;return}
         setSession(auth);
       }
-      const {checkoutUrl}=await apiJson('/api/orders',{...place,inputs:orderInputs,consent:true,privacy:true},{auth:true});
-      location.href=checkoutUrl||'/account/';
+      const {checkoutUrl,order}=await apiJson('/api/orders',{...place,inputs:orderInputs,consent:true,privacy:true,coupon:coupon?.code||''},{auth:true});
+      location.href=checkoutUrl||('/account/?ordine='+encodeURIComponent(order.id));
     }catch(err){status.textContent=err.message;btn.disabled=false;if(err.status===401)orderPage()}
   });
 }
