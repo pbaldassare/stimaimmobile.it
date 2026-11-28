@@ -16,6 +16,7 @@ titles.indirizzo = 'Cerca per indirizzo';
 titles.comune = 'Inserisci il comune';
 let cancelSearch;
 
+const SURFACE_HELP = 'La superficie commerciale comprende i locali interni con i muri (perimetrali al 100%, in comune con altre unità al 50%), più una quota degli spazi accessori: balconi e terrazze circa 25–30%, cantine e soffitte circa 25%, giardino privato circa 10%. Se non la conosci, la trovi nella visura catastale o nell’atto di acquisto.';
 const EXAMPLE_PLACE = {comune:'Brescia', zona:'Centro storico', destinazione:'Direzionale'};
 const EXAMPLE_ANSWERS = {surface:'65', floor:'rialzato', year:'1900'};
 const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -297,7 +298,8 @@ function questionPage(){
     if(q.type==='number') control='<input class="input" type="number" value="'+esc(value)+'">';
     else if(q.type==='yesno') control='<div class="choice-row" role="radiogroup" aria-label="'+esc(q.label)+'">'+(q.options||[]).map(opt=>'<label class="choice"><input type="radio" name="'+esc(q.id)+'" value="'+esc(opt)+'"'+(same(opt,value)?' checked':'')+'> '+esc(opt)+'</label>').join('')+'</div>';
     else control='<select>'+options(q.options,value)+'</select>';
-    container.insertAdjacentHTML('beforeend',field(id,q.label,control));const row=container.lastElementChild;
+    container.insertAdjacentHTML('beforeend',field(id,q.label,control,q.id==='surface'));const row=container.lastElementChild;
+    if(q.id==='surface'){row.insertAdjacentHTML('beforeend','<p class="muted small" id="surface-help">'+esc(SURFACE_HELP)+'</p>');row.querySelector('input').setAttribute('aria-describedby','surface-help')}
     const controls=[...row.querySelectorAll('input,select')];
     const input=controls[0];
     if(input && q.type!=='yesno'){input.id=id;input.name=q.id}

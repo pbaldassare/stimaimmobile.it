@@ -1,3 +1,4 @@
+import { simplifyCatalog } from './simplify.mjs';
 // Input order follows the CALCOLI worksheet. Select options derive from the score maps,
 // plus PHP piano/anno labels that stay partial until those coefficient tables exist.
 const phpFloors = ['interrato', 'terra', ...Array.from({ length: 50 }, (_, i) => String(i + 1))];
@@ -863,3 +864,5 @@ for (const field of fields) {
   }
 }
 
+
+fields.splice(0, fields.length, ...simplifyCatalog(fields));
