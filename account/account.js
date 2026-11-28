@@ -34,14 +34,14 @@ function loginView(mode = 'login', message = '') {
     (message ? '<p class="notice">' + esc(message) + '</p>' : '') +
     '<div class="form-grid">' + field('a-mail', 'Email', '<input id="a-mail" class="input" name="email" type="email" required maxlength="254" autocomplete="email">') +
     (recover ? '' : field('a-pass', 'Password', '<input id="a-pass" class="input" name="password" type="password" required ' + (signup ? 'minlength="8" autocomplete="new-password"' : 'autocomplete="current-password"') + '>')) +
-    '</div><p class="error" role="alert"></p><div class="form-actions"><button class="btn" type="submit">' + (signup ? 'Crea account' : recover ? 'Invia il link' : 'Accedi') + '</button></div>' +
+    '</div>' + (signup ? '<label class="choice"><input type="checkbox" name="privacy" required> Ho letto l’<a class="text-link" href="/privacy/" target="_blank" rel="noopener">informativa privacy</a> e acconsento al trattamento dei dati per la valutazione.</label>' : '') + '<p class="error" role="alert"></p><div class="form-actions"><button class="btn" type="submit">' + (signup ? 'Crea account' : recover ? 'Invia il link' : 'Accedi') + '</button></div>' +
     '<p class="muted small">' + (signup ? '<a href="#" data-mode="login">Hai già un account? Accedi</a>'
       : recover ? '<a href="#" data-mode="login">Torna all’accesso</a>'
       : '<a href="#" data-mode="signup">Non hai un account? Registrati</a> · <a href="#" data-mode="recover">Password dimenticata?</a>') + '</p></form>';
   box.querySelectorAll('[data-mode]').forEach(link => link.addEventListener('click', event => { event.preventDefault(); loginView(link.dataset.mode); }));
   bindForm(box.querySelector('#auth'), async data => {
     if (recover) { await apiJson('/api/account/recover', { email: data.email }); loginView('login', 'Se l’indirizzo è registrato, ti abbiamo inviato un link per scegliere una nuova password.'); return; }
-    const session = await apiJson('/api/account/' + mode, data);
+    const session = await apiJson('/api/account/' + mode, { email: data.email, password: data.password });
     if (session.confirm) { loginView('login', 'Ti abbiamo inviato una email di conferma. Apri il link e poi accedi.'); return; }
     setSession(session);
     await ordersView();

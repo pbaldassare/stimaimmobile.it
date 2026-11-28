@@ -347,6 +347,7 @@ function orderPage(){
         field('o-mail','Email','<input id="o-mail" class="input" name="email" type="email" required maxlength="254" autocomplete="email">')+
         field('o-pass','Password (almeno 8 caratteri)','<input id="o-pass" class="input" name="password" type="password" required minlength="8" autocomplete="new-password">')+'</div>')+
     // TODO legale: testo definitivo di termini di vendita e rinuncia al recesso da far validare.
+    '<label class="choice"><input type="checkbox" name="privacy" required> Ho letto l’<a class="text-link" href="/privacy/" target="_blank" rel="noopener">informativa privacy</a> e acconsento al trattamento dei dati per la valutazione.</label>'+
     '<label class="choice"><input type="checkbox" name="consent" required> Chiedo la consegna immediata della valutazione e prendo atto che, una volta resa disponibile, perdo il diritto di recesso.</label>'+
     errorBox()+'<div class="form-actions"><button class="btn" type="submit">Paga '+money.format(price)+'</button></div></form>';
   document.querySelector('#edit').addEventListener('click',()=>{wizard=true;step=0;go('valutazione')});
@@ -363,7 +364,7 @@ function orderPage(){
         if(auth.confirm){status.textContent='Ti abbiamo inviato una email di conferma: apri il link, poi torna qui e scegli «Ho già un account».';btn.disabled=false;return}
         setSession(auth);
       }
-      const {checkoutUrl}=await apiJson('/api/orders',{...place,inputs:orderInputs,consent:true},{auth:true});
+      const {checkoutUrl}=await apiJson('/api/orders',{...place,inputs:orderInputs,consent:true,privacy:true},{auth:true});
       location.href=checkoutUrl||'/account/';
     }catch(err){status.textContent=err.message;btn.disabled=false;if(err.status===401)orderPage()}
   });

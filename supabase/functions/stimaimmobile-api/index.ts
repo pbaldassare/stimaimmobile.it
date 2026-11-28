@@ -342,9 +342,11 @@ async function handle(req: Request): Promise<Response> {
   if (route === "POST /orders") {
     const user = await requireUser(bearer(req));
     const data = await readBody(req);
+    if (data.privacy !== true) throw new HttpError(422, "Accetta l’informativa privacy per procedere.");
     if (data.consent !== true) throw new HttpError(422, "Conferma la richiesta di consegna immediata per procedere.");
     const order = await scope(async tx => {
       const { snapshot } = await buildSnapshot(tx, data);
+      Object.assign(snapshot, { privacyAcceptedAt: new Date().toISOString(), privacyVersion: "2026-11-28" });
       const [row] = await tx`insert into stimaimmobile.orders(user_id,email,snapshot,amount_cents,currency,consent_at)
         values(${user.id}::uuid,${user.email},${tx.json(snapshot)},${PRICE_CENTS},${CURRENCY},now()) returning *`;
       return row;
