@@ -7,7 +7,8 @@ import { canonicalZone } from "../../../engine/zones.mjs";
 import { OMI_FONTE, OMI_LICENSE } from "../../../engine/omi.mjs";
 import { previewCatalog } from "./catalog.mjs";
 import { addressCandidates } from "./geocoding.mjs";
-import { isEmail, requestKind, sendThankYou, MAIL_FROM, STATUSES } from "./mail.mjs";
+import { isEmail, requestKind, sendThankYou, sendOrderReady, MAIL_FROM, STATUSES } from "./mail.mjs";
+import { checkoutForm, verifyStripeSignature, PRICE_CENTS, CURRENCY, ORDER_STATUSES } from "./payments.mjs";
 
 const cors = {
   "Access-Control-Allow-Origin": "*",
@@ -19,6 +20,8 @@ const cors = {
 };
 const url = Deno.env.get("SUPABASE_URL")!;
 const key = Deno.env.get("SUPABASE_ANON_KEY")!;
+const SITE_URL = (Deno.env.get("STIMAIMMOBILE_SITE_URL") || "https://stimaimmobile-it.pages.dev").replace(/\/+$/, "");
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const db = postgres(Deno.env.get("SUPABASE_DB_URL")!, {
   max: 1, prepare: false, idle_timeout: 5, connect_timeout: 8,
 });
@@ -86,6 +89,71 @@ async function requireAdmin(token: string) {
   const users = await scope(tx => tx`select user_id from stimaimmobile.admins where user_id = ${user.id}::uuid`);
   if (!users.length) throw new HttpError(403, "Account non abilitato a StimaImmobile.");
   return user.id;
+}
+function bearer(req: Request) {
+  return req.headers.get("Authorization")?.match(/^Bearer ([^\s]+)$/i)?.[1] || "";
+}
+async function requireUser(token: string): Promise<{ id: string; email: string }> {
+  if (!token) throw new HttpError(401, "Accedi alla tua area personale.");
+  const auth = await fetch(url + "/auth/v1/user", { headers: { apikey: key, Authorization: "Bearer " + token } });
+  if (!auth.ok) throw new HttpError(auth.status >= 500 ? 503 : 401, "Sessione scaduta. Accedi di nuovo.");
+  const user = await auth.json();
+  if (!user?.id || !user?.email) throw new HttpError(401, "Sessione scaduta. Accedi di nuovo.");
+  return { id: user.id, email: user.email };
+}
+function credentials(data: Record<string, unknown>) {
+  const email = field(data.email, "email", 254);
+  if (!isEmail(email)) throw new HttpError(422, "Inserisci un indirizzo email valido.");
+  if (typeof data.password !== "string" || !data.password.length || data.password.length > 4096)
+    throw new HttpError(422, "Inserisci la password.");
+  return { email, password: data.password };
+}
+function authError(status: number, message: string) {
+  return new HttpError(status === 429 ? 429 : status >= 500 ? 503 : status === 422 || status === 400 ? 422 : 401, message);
+}
+async function stripeKeys() {
+  const [row] = await scope(tx => tx`select * from stimaimmobile.stripe_keys()`);
+  return { secret: String(row?.secret_key || ""), webhook: String(row?.webhook_secret || "") };
+}
+async function startCheckout(orderId: string, email: string, amount: number) {
+  const { secret } = await stripeKeys();
+  // Stripe not configured yet: the order stays pending, an operator can mark it paid from the admin.
+  if (!secret) return null;
+  const response = await fetch("https://api.stripe.com/v1/checkout/sessions", {
+    method: "POST", signal: AbortSignal.timeout(10000),
+    headers: { Authorization: "Bearer " + secret, "Content-Type": "application/x-www-form-urlencoded",
+      "Idempotency-Key": "checkout-" + orderId + "-" + Math.floor(Date.now() / 3600000) },
+    body: checkoutForm({ orderId, email, siteUrl: SITE_URL, amount }),
+  });
+  if (!response.ok) {
+    console.error("Stripe checkout failed", response.status);
+    throw new HttpError(503, "Pagamento non disponibile in questo momento. Riprova tra poco.");
+  }
+  const session = await response.json();
+  await scope(tx => tx`update stimaimmobile.orders set stripe_session_id=${session.id}, updated_at=now() where id=${orderId}::uuid`);
+  return String(session.url);
+}
+async function notifyOrderReady(email: string) {
+  try {
+    const result = await sendOrderReady({ apiKey: await resendApiKey(), from: MAIL_FROM, to: email, accountUrl: SITE_URL + "/account/" });
+    if (!result.sent) console.error("Resend order mail skipped", result.reason);
+  } catch (error) {
+    console.error("Resend order mail failed", error instanceof Error ? error.name : "unknown");
+  }
+}
+function orderView(row: Record<string, any>) {
+  const s = row.snapshot || {}, paid = row.status === "paid";
+  return {
+    id: row.id, status: row.status, createdAt: row.created_at, paidAt: row.paid_at,
+    amount: row.amount_cents / 100, currency: row.currency,
+    comune: s.comune, zona: s.zona, destinazione: s.destinazione, address: s.address || "",
+    surface: s.result?.surface, partial: Boolean(s.result?.warnings?.length),
+    // Value fields are released only after payment.
+    result: paid ? {
+      value: s.result.value, minimum: s.result.minimum, rate: s.result.rate, surface: s.result.surface,
+      factors: s.result.factors, warnings: s.result.warnings, fonte: s.fonte, data_riferimento: s.data_riferimento,
+    } : null,
+  };
 }
 
 function isMissingRelation(error: unknown) {
@@ -165,6 +233,29 @@ async function notifyThankYou(name: string, email: string) {
     console.error("Resend thank-you failed", error instanceof Error ? error.name : "unknown");
   }
 }
+async function buildSnapshot(tx: postgres.TransactionSql, data: Record<string, unknown>) {
+  const area = region(data);
+  area.zona = canonicalZone(area.zona);
+  if (!data.inputs || typeof data.inputs !== "object" || Array.isArray(data.inputs))
+    throw new HttpError(422, "Compila le caratteristiche dell’immobile.");
+  const address = field(data.address, "indirizzo", 220, false);
+  const rate = await lookupRate(tx, area);
+  if (!rate) throw new HttpError(404, "Quotazione indisponibile per questa zona e destinazione.");
+  area.comune = rate.comune; area.zona = rate.zona; area.destinazione = rate.destinazione;
+  const catalog = await loadCatalog(tx);
+  let inputs, result;
+  try {
+    inputs = normalizeInputs(data.inputs, catalog);
+    result = calculate(inputs, Number(rate.euro_mq), catalog);
+  } catch (error) { throw new HttpError(422, error instanceof Error ? error.message : "Verifica i dati inseriti."); }
+  const snapshot = { inputs, result, ...area, address, fonte:rate.fonte, data_riferimento:referenceDate(rate.data_riferimento),
+    rateMin: rate.euro_mq_min == null ? undefined : Number(rate.euro_mq_min),
+    rateMax: rate.euro_mq_max == null ? undefined : Number(rate.euro_mq_max),
+    rateSource: rate.source || (String(rate.fonte || "").includes("OMI") ? "omi" : "listino"),
+    questions: publicQuestions(catalog),
+    createdAt:new Date().toISOString(), engineVersion:ENGINE_VERSION };
+  return { snapshot };
+}
 async function handle(req: Request): Promise<Response> {
   if (req.method === "OPTIONS") return new Response(null, { status: 204, headers: cors });
   const requestUrl = new URL(req.url);
@@ -172,7 +263,7 @@ async function handle(req: Request): Promise<Response> {
   const route = req.method + " " + pathname;
   if (route === "GET /questions") {
     const catalog = await scope(loadCatalog);
-    return json({ questions: publicQuestions(catalog), engineVersion: ENGINE_VERSION });
+    return json({ questions: publicQuestions(catalog), engineVersion: ENGINE_VERSION, price: PRICE_CENTS / 100, currency: CURRENCY });
   }
   if (route === "POST /address") {
     const data = await readBody(req, 2048);
@@ -239,43 +330,27 @@ async function handle(req: Request): Promise<Response> {
     return json(payload);
   }
   if (route === "POST /estimate") {
-    const data = await readBody(req), area = region(data);
-    area.zona = canonicalZone(area.zona);
-    if (!data.inputs || typeof data.inputs !== "object" || Array.isArray(data.inputs))
-      throw new HttpError(422, "Compila le caratteristiche dell’immobile.");
-    const name = field(data.name, "nome", 120, false);
-    const email = field(data.email, "email", 254, false);
-    if (email && !isEmail(email)) throw new HttpError(422, "Inserisci un indirizzo email valido.");
-    const token = toHex(crypto.getRandomValues(new Uint8Array(32)));
-    const tokenDigest = await digest(token);
-    const result = await scope(async tx => {
-      const rate = await lookupRate(tx, area);
-      if (!rate) throw new HttpError(404, "Quotazione indisponibile per questa zona e destinazione.");
-      area.comune = rate.comune; area.zona = rate.zona; area.destinazione = rate.destinazione;
-      const catalog = await loadCatalog(tx);
-      let inputs, result;
-      try {
-        inputs = normalizeInputs(data.inputs, catalog);
-        result = calculate(inputs, Number(rate.euro_mq), catalog);
-      } catch (error) { throw new HttpError(422, error instanceof Error ? error.message : "Verifica i dati inseriti."); }
-      const dataRiferimento = referenceDate(rate.data_riferimento);
-      const snapshot = { inputs, result, ...area, fonte:rate.fonte, data_riferimento:dataRiferimento,
-        rateMin: rate.euro_mq_min == null ? undefined : Number(rate.euro_mq_min),
-        rateMax: rate.euro_mq_max == null ? undefined : Number(rate.euro_mq_max),
-        rateSource: rate.source || (String(rate.fonte || "").includes("OMI") ? "omi" : "listino"),
-        questions: publicQuestions(catalog),
-        createdAt:new Date().toISOString(), engineVersion:ENGINE_VERSION };
-      await tx`insert into stimaimmobile.estimates(token_digest,snapshot) values(${tokenDigest},${tx.json(snapshot)})`;
-      if (email) {
-        const summary = `Stima indicativa ${result.value} € (minimo ${result.minimum} €), superficie ${result.surface} m².`;
-        await tx`insert into stimaimmobile.contacts(name,email,message,comune,zona,destinazione,kind)
-          values(${name || "Visitatore"},${email},${summary},${area.comune},${area.zona},${area.destinazione},'estimate')`;
-      }
-      return { ...result, fonte:snapshot.fonte, data_riferimento:snapshot.data_riferimento, createdAt:snapshot.createdAt,
-        contactReceived:Boolean(email) };
+    throw new HttpError(410, "Le valutazioni ora sono a pagamento: aggiorna la pagina e completa l’ordine.");
+  }
+  if (route === "POST /quote") {
+    // Order summary before payment: coverage and completeness only, never the value.
+    const data = await readBody(req);
+    const { snapshot } = await scope(tx => buildSnapshot(tx, data));
+    return json({ comune:snapshot.comune, zona:snapshot.zona, destinazione:snapshot.destinazione,
+      surface:snapshot.result.surface, warnings:snapshot.result.warnings, price:PRICE_CENTS / 100, currency:CURRENCY });
+  }
+  if (route === "POST /orders") {
+    const user = await requireUser(bearer(req));
+    const data = await readBody(req);
+    if (data.consent !== true) throw new HttpError(422, "Conferma la richiesta di consegna immediata per procedere.");
+    const order = await scope(async tx => {
+      const { snapshot } = await buildSnapshot(tx, data);
+      const [row] = await tx`insert into stimaimmobile.orders(user_id,email,snapshot,amount_cents,currency,consent_at)
+        values(${user.id}::uuid,${user.email},${tx.json(snapshot)},${PRICE_CENTS},${CURRENCY},now()) returning *`;
+      return row;
     });
-    if (email) await notifyThankYou(name, email);
-    return json({ ...result, engineVersion: ENGINE_VERSION, pdfUrl:`${url}/functions/v1/stimaimmobile-api/pdf/${token}` }, 201);
+    const checkoutUrl = await startCheckout(order.id, user.email, order.amount_cents);
+    return json({ order: orderView(order), checkoutUrl }, 201);
   }
   if (req.method === "GET" && pathname.startsWith("/pdf/")) {
     const token = pathname.slice(5);
@@ -297,6 +372,86 @@ async function handle(req: Request): Promise<Response> {
     await notifyThankYou(name, email);
     return json({ received:true }, 201);
   }
+  if (route === "POST /account/signup" || route === "POST /account/login") {
+    const { email, password } = credentials(await readBody(req, 8192));
+    const signup = route.endsWith("/signup");
+    if (signup && password.length < 8) throw new HttpError(422, "Scegli una password di almeno 8 caratteri.");
+    const target = signup
+      ? url + "/auth/v1/signup?redirect_to=" + encodeURIComponent(SITE_URL + "/account/")
+      : url + "/auth/v1/token?grant_type=password";
+    const auth = await fetch(target, { method:"POST", headers:{ apikey:key, "Content-Type":"application/json" },
+      body:JSON.stringify({ email, password }) });
+    if (!auth.ok) throw authError(auth.status, signup
+      ? "Registrazione non riuscita. Se hai già un account, accedi."
+      : "Accesso non riuscito. Verifica email e password.");
+    const session = await auth.json();
+    // With email confirmation enabled Supabase returns no session: the user confirms, then logs in.
+    if (!session.access_token) return json({ confirm:true }, 201);
+    return json({ access_token:session.access_token, expires_in:session.expires_in, email });
+  }
+  if (route === "POST /account/recover") {
+    const data = await readBody(req, 2048), email = field(data.email, "email", 254);
+    if (!isEmail(email)) throw new HttpError(422, "Inserisci un indirizzo email valido.");
+    const auth = await fetch(url + "/auth/v1/recover?redirect_to=" + encodeURIComponent(SITE_URL + "/account/"), {
+      method:"POST", headers:{ apikey:key, "Content-Type":"application/json" }, body:JSON.stringify({ email }) });
+    if (auth.status === 429) throw new HttpError(429, "Troppe richieste. Riprova tra qualche minuto.");
+    // Same answer whether or not the account exists.
+    return json({ sent:true });
+  }
+  if (route === "POST /account/password") {
+    const token = bearer(req);
+    await requireUser(token);
+    const data = await readBody(req, 8192);
+    if (typeof data.password !== "string" || data.password.length < 8 || data.password.length > 4096)
+      throw new HttpError(422, "Scegli una password di almeno 8 caratteri.");
+    const auth = await fetch(url + "/auth/v1/user", { method:"PUT",
+      headers:{ apikey:key, Authorization:"Bearer " + token, "Content-Type":"application/json" },
+      body:JSON.stringify({ password:data.password }) });
+    if (!auth.ok) throw authError(auth.status, "Password non aggiornata. Scegline una diversa o riprova.");
+    return json({ updated:true });
+  }
+  if (pathname === "/me/orders" || pathname.startsWith("/me/orders/")) {
+    const user = await requireUser(bearer(req));
+    if (route === "GET /me/orders") {
+      const rows = await scope(tx => tx`select * from stimaimmobile.orders
+        where user_id=${user.id}::uuid and status <> 'cancelled' order by created_at desc limit 200`);
+      return json({ orders: rows.map(orderView), email: user.email });
+    }
+    const [, , , id, action] = pathname.split("/");
+    if (!UUID.test(id || "")) throw new HttpError(404, "Valutazione non trovata.");
+    const [order] = await scope(tx => tx`select * from stimaimmobile.orders where id=${id}::uuid and user_id=${user.id}::uuid`);
+    if (!order) throw new HttpError(404, "Valutazione non trovata.");
+    if (route === `GET /me/orders/${id}/pdf`) {
+      if (order.status !== "paid") throw new HttpError(402, "La relazione è disponibile dopo il pagamento.");
+      return new Response(await makePdf(order.snapshot), { headers:{ ...cors, "Content-Type":"application/pdf",
+        "Content-Disposition":'attachment; filename="Relazione-StimaImmobile.pdf"' } });
+    }
+    if (route === `POST /me/orders/${id}/checkout` && action === "checkout") {
+      if (order.status !== "pending") throw new HttpError(409, "Questo ordine non è in attesa di pagamento.");
+      return json({ checkoutUrl: await startCheckout(order.id, order.email, order.amount_cents) });
+    }
+  }
+  if (route === "POST /stripe/webhook") {
+    if (Number(req.headers.get("Content-Length")) > 65536) throw new HttpError(413, "Dati troppo grandi.");
+    const payload = await req.text();
+    if (payload.length > 65536) throw new HttpError(413, "Dati troppo grandi.");
+    const { webhook } = await stripeKeys();
+    if (!await verifyStripeSignature(payload, req.headers.get("Stripe-Signature") || "", webhook))
+      throw new HttpError(400, "Firma non valida.");
+    const event = JSON.parse(payload);
+    const session = event?.data?.object || {};
+    const paidEvent = event.type === "checkout.session.async_payment_succeeded"
+      || (event.type === "checkout.session.completed" && session.payment_status === "paid");
+    const orderId = String(session.client_reference_id || "");
+    if (paidEvent && UUID.test(orderId)) {
+      const [order] = await scope(tx => tx`update stimaimmobile.orders
+        set status='paid', paid_at=now(), updated_at=now(), stripe_session_id=${String(session.id || "")}
+        where id=${orderId}::uuid and status='pending' and amount_cents=${Number(session.amount_total)}
+        returning email`);
+      if (order) await notifyOrderReady(order.email);
+    }
+    return json({ received:true });
+  }
   if (route === "POST /admin/login") {
     const data = await readBody(req), email = field(data.email,"email",254);
     if (typeof data.password !== "string" || !data.password.length || data.password.length > 4096)
@@ -315,6 +470,28 @@ async function handle(req: Request): Promise<Response> {
       const contacts = await scope(tx => tx`select id,created_at,updated_at,name,email,message,comune,zona,destinazione,kind,status,notes
         from stimaimmobile.contacts order by created_at desc limit 200`);
       return json({ contacts });
+    }
+    if (route === "GET /admin/orders") {
+      const rows = await scope(tx => tx`select * from stimaimmobile.orders order by created_at desc limit 200`);
+      return json({ orders: rows.map(row => ({ ...orderView(row), email: row.email, notes: row.notes,
+        stripe: Boolean(row.stripe_session_id) })) });
+    }
+    if (route === "POST /admin/order") {
+      // Manual status change: payments outside Stripe (bank transfer), refunds, cancellations.
+      const data = await readBody(req);
+      const id = field(data.id, "ordine", 36);
+      if (!UUID.test(id)) throw new HttpError(422, "Ordine non valido.");
+      const status = field(data.status, "stato", 16);
+      if (!ORDER_STATUSES.includes(status)) throw new HttpError(422, "Stato non valido.");
+      const notes = field(data.notes, "note", 4000, false);
+      const [before] = await scope(tx => tx`select status from stimaimmobile.orders where id=${id}::uuid`);
+      if (!before) throw new HttpError(404, "Ordine non trovato.");
+      const [order] = await scope(tx => tx`update stimaimmobile.orders
+        set status=${status}, notes=${notes}, updated_at=now(),
+            paid_at=case when ${status}='paid' then coalesce(paid_at, now()) else paid_at end
+        where id=${id}::uuid returning *`);
+      if (before.status !== "paid" && status === "paid") await notifyOrderReady(order.email);
+      return json({ order: { ...orderView(order), email: order.email, notes: order.notes, stripe: Boolean(order.stripe_session_id) } });
     }
     if (route === "GET /admin/omi") {
       const [stats] = await scope(tx => tx`
@@ -388,7 +565,7 @@ async function handle(req: Request): Promise<Response> {
     if (route === "POST /admin/contact") {
       const data = await readBody(req);
       const id = field(data.id, "richiesta", 36);
-      if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(id))
+      if (!UUID.test(id))
         throw new HttpError(422, "Richiesta non valida.");
       const status = field(data.status, "stato", 32);
       if (STATUSES.indexOf(status) < 0) throw new HttpError(422, "Stato non valido.");

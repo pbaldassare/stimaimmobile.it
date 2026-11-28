@@ -9,6 +9,7 @@
   <p>Sezioni</p>
   <button type="button" id="nav-parametri" aria-controls="panel-parametri" aria-current="page">Parametri</button>
   <button type="button" id="nav-richieste" aria-controls="panel-richieste">Richieste</button>
+  <button type="button" id="nav-ordini" aria-controls="panel-ordini">Ordini</button>
   <button type="button" id="nav-omi" aria-controls="panel-omi">Dati OMI</button>
 </nav>
 <div class="panel">
@@ -47,6 +48,11 @@
 <div class="top"><h2>Richieste</h2><div class="toolbar"><label>Stato<select id="filter-status"><option value="">Tutte</option><option value="new">Nuove</option><option value="contacted">Contattate</option><option value="closed">Chiuse</option></select></label><button class="outline" id="refresh" type="button">Aggiorna</button></div></div>
 <p class="hint">Stime con recapiti, messaggi di contatto e richieste di copertura. Puoi aggiornare stato e note.</p>
 <div id="contacts"></div>
+</article>
+<article id="panel-ordini" hidden>
+<div class="top"><h2>Ordini</h2><div class="toolbar"><label>Stato<select id="filter-order"><option value="">Tutti</option><option value="pending">In attesa</option><option value="paid">Pagati</option><option value="refunded">Rimborsati</option><option value="cancelled">Annullati</option></select></label><button class="outline" id="refresh-orders" type="button">Aggiorna</button></div></div>
+<p class="hint">Valutazioni acquistate dai clienti. Stripe segna come pagati gli ordini in automatico; qui puoi registrare a mano un pagamento (es. bonifico), un rimborso o un annullamento. Segnare «Pagato» sblocca la valutazione nell’area del cliente e gli invia la mail.</p>
+<div id="orders"></div>
 </article>
 <article id="panel-omi" hidden>
 <div class="top"><h2>Dati OMI</h2></div>

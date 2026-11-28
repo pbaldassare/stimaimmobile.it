@@ -2,17 +2,20 @@ import { apiFetch } from './api-client.js';
 const el = (id) => document.getElementById(id);
 const KIND = { contact: 'Contatto', coverage: 'Copertura', estimate: 'Stima' };
 const STATUS = { new: 'Nuova', contacted: 'Contattata', closed: 'Chiusa' };
+const ORDER_STATUS = { pending: 'In attesa', paid: 'Pagato', refunded: 'Rimborsato', cancelled: 'Annullato' };
+const euro = new Intl.NumberFormat('it-IT', { style: 'currency', currency: 'EUR' });
 let token = '';
 let reviewed = '';
 let reviewVersion = 0;
 let contacts = [];
+let orders = [];
 let modelFields = [];
 let editingIndex = -1;
 let fieldQuery = '';
 let omiOffset = 0;
 let comuniLoaded = false;
 const OMI_PAGE = 80;
-const PANELS = ['parametri', 'richieste', 'omi'];
+const PANELS = ['parametri', 'richieste', 'ordini', 'omi'];
 const CONTROL = { select: 'Tendina', yesno: 'Sì / No', count: 'Conteggio 0–N', number: 'Numero' };
 const euroFormat = new Intl.NumberFormat('it-IT', { minimumFractionDigits: 0, maximumFractionDigits: 2 });
 
@@ -32,6 +35,8 @@ function signOut() {
   el('load').reset();
   clearPreview();
   el('contacts').replaceChildren();
+  orders = [];
+  el('orders').replaceChildren();
   el('issues').replaceChildren();
   el('rows').replaceChildren();
   el('field-rows').replaceChildren();
@@ -123,6 +128,63 @@ function renderContacts() {
     target.append(form);
   }
 }
+function renderOrders() {
+  const target = el('orders');
+  target.replaceChildren();
+  const filter = el('filter-order').value;
+  const rows = orders.filter(item => !filter || item.status === filter);
+  if (!rows.length) {
+    target.append(node('p', orders.length ? 'Nessun ordine in questo stato.' : 'Nessun ordine ricevuto.'));
+    return;
+  }
+  for (const order of rows) {
+    const form = document.createElement('form');
+    form.className = 'request';
+    const head = document.createElement('div');
+    head.className = 'request-head';
+    head.append(node('span', ORDER_STATUS[order.status] || order.status, 'badge'), node('strong', order.email));
+    const place = [order.address, [order.comune, order.zona, order.destinazione].filter(Boolean).join(' · ')].filter(Boolean).join(' — ');
+    const value = order.result ? ' · valore ' + euro.format(order.result.value) : '';
+    form.append(head,
+      node('p', new Date(order.createdAt).toLocaleString('it-IT') + ' · ' + euro.format(order.amount) + (order.stripe ? ' · Stripe' : '') + value),
+      node('p', place));
+    const statusLabel = node('label', 'Stato');
+    const status = document.createElement('select');
+    for (const [key, label] of Object.entries(ORDER_STATUS)) status.append(option(key, label, order.status === key));
+    statusLabel.append(status);
+    const notesLabel = node('label', 'Note interne');
+    const notes = document.createElement('textarea');
+    notes.maxLength = 4000;
+    notes.rows = 2;
+    notes.value = order.notes || '';
+    notesLabel.append(notes);
+    const save = node('button', 'Salva');
+    save.type = 'submit';
+    form.append(statusLabel, notesLabel, save);
+    form.addEventListener('submit', async event => {
+      event.preventDefault();
+      if (status.value === 'paid' && order.status !== 'paid' && !confirm('Segnare l’ordine come pagato? Il cliente vedrà la valutazione e riceverà la mail.')) return;
+      save.disabled = true;
+      notify('Salvataggio in corso…');
+      try {
+        const { order: updated } = await request('order', { id: order.id, status: status.value, notes: notes.value });
+        orders[orders.findIndex(item => item.id === order.id)] = updated;
+        notify('Ordine aggiornato.');
+        renderOrders();
+      } catch (error) { notify(error.message); save.disabled = false; }
+    });
+    target.append(form);
+  }
+}
+async function loadOrders() {
+  const session = token;
+  const data = await request('orders');
+  if (token !== session) return;
+  orders = Array.isArray(data.orders) ? data.orders : [];
+  renderOrders();
+}
+el('filter-order').onchange = renderOrders;
+el('refresh-orders').onclick = () => loadOrders().catch(error => notify(error.message));
 async function loadOmi() {
   const session = token;
   const data = await request('omi').catch(() => null);
@@ -156,7 +218,7 @@ el('login').onsubmit = async (event) => {
     el('management').hidden = false;
     showPanel('parametri');
     notify('');
-    await Promise.all([loadContacts(), loadOmi(), loadFields()]);
+    await Promise.all([loadContacts(), loadOrders(), loadOmi(), loadFields()]);
   } catch (error) { notify(error.message); }
   finally { button.disabled = false; }
 };

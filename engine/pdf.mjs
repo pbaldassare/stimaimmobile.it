@@ -122,6 +122,7 @@ export function makePdf(snapshot) {
   newPage();
   print(result.warnings?.length ? 'Stima indicativa parziale' : 'Stima del valore immobiliare', 48, y, 26, 'F2');
   y -= 32;
+  if (snapshot.address) paragraph(snapshot.address);
   paragraph([snapshot.comune, snapshot.zona, snapshot.destinazione].filter(Boolean).join(' · '), muted);
   page.push(teal + ' rg 48 ' + (y - 81) + ' 499 80 re f');
   print('VALORE STIMATO', 63, y - 24, 9, 'F2', '1 1 1');

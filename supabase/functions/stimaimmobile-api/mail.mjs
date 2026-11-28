@@ -50,10 +50,32 @@ export function thankYouMessage(name) {
   };
 }
 
-export async function sendThankYou({ apiKey, from = MAIL_FROM, to, name, fetchImpl = fetch }) {
+export function orderReadyMessage(accountUrl) {
+  const text = "Ciao,\n\n"
+    + "abbiamo ricevuto il pagamento: la tua valutazione è pronta.\n"
+    + "La trovi nella tua area personale, dove puoi consultarla e scaricare la relazione in PDF:\n"
+    + accountUrl + "\n\n"
+    + "La stima resta indicativa e dipende dai dati dichiarati: non sostituisce una perizia o una valutazione formale.\n\n"
+    + "Cordiali saluti,\nStimaImmobile.it";
+  const html = '<div style="font-family:Georgia,\'Times New Roman\',serif;color:#202d31;max-width:560px;line-height:1.6">'
+    + "<p>Ciao,</p>"
+    + "<p>abbiamo ricevuto il pagamento: la tua valutazione è pronta.</p>"
+    + '<p><a href="' + escapeHtml(accountUrl) + '" style="color:#174c41">Apri la tua area personale</a> per consultarla e scaricare la relazione in PDF.</p>'
+    + "<p>La stima resta indicativa e dipende dai dati dichiarati: non sostituisce una perizia o una valutazione formale.</p>"
+    + "<p>Cordiali saluti,<br>StimaImmobile.it</p>"
+    + "</div>";
+  return { subject: "La tua valutazione è pronta · StimaImmobile.it", text, html };
+}
+
+export function sendThankYou({ apiKey, from = MAIL_FROM, to, name, fetchImpl = fetch }) {
+  return sendMail({ apiKey, from, to, mail: thankYouMessage(name), fetchImpl });
+}
+export function sendOrderReady({ apiKey, from = MAIL_FROM, to, accountUrl, fetchImpl = fetch }) {
+  return sendMail({ apiKey, from, to, mail: orderReadyMessage(accountUrl), fetchImpl });
+}
+async function sendMail({ apiKey, from, to, mail, fetchImpl }) {
   if (!apiKey) return { sent: false, reason: "missing-key" };
   if (!isEmail(to)) return { sent: false, reason: "invalid-to" };
-  const mail = thankYouMessage(name);
   const response = await fetchImpl("https://api.resend.com/emails", {
     method: "POST",
     headers: { Authorization: "Bearer " + apiKey, "Content-Type": "application/json" },

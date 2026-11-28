@@ -5,11 +5,13 @@ import { readFileSync } from 'node:fs';
 const html = readFileSync(new URL('../admin.html', import.meta.url), 'utf8');
 const js = readFileSync(new URL('../admin.js', import.meta.url), 'utf8');
 
-test('reserved admin sidebar lists Parametri, Richieste, Dati OMI in that order', () => {
+test('reserved admin sidebar lists Parametri, Richieste, Ordini, Dati OMI in that order', () => {
   const nav = html.match(/<nav class="sidebar"[\s\S]*?<\/nav>/);
   assert.ok(nav);
   const labels = [...nav[0].matchAll(/<button[^>]*>([^<]+)<\/button>/g)].map(match => match[1]);
-  assert.deepEqual(labels, ['Parametri', 'Richieste', 'Dati OMI']);
+  assert.deepEqual(labels, ['Parametri', 'Richieste', 'Ordini', 'Dati OMI']);
+  assert.match(html, /id="panel-ordini"/);
+  assert.match(html, /id="orders"/);
   assert.match(html, /id="panel-parametri"/);
   assert.match(html, /id="panel-richieste"/);
   assert.match(html, /id="panel-omi"/);

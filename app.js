@@ -1,4 +1,4 @@
-import { apiFetch, publicUrl } from './api-client.js';
+import { apiFetch, apiJson, getSession, setSession, clearSession } from './api-client.js';
 
 const page = document.querySelector('#page');
 const home = document.querySelector('#home');
@@ -6,9 +6,9 @@ const navigation = document.querySelector('#nav');
 const menu = document.querySelector('.menu-btn');
 const money = new Intl.NumberFormat('it-IT', {style:'currency', currency:'EUR'});
 const number = new Intl.NumberFormat('it-IT', {maximumFractionDigits:3});
-const titles = {home:'Valutazione immobiliare online', metodo:'Metodo', zone:'Zone servite', contatti:'Contatti', valutazione:'Valuta il tuo immobile', risultato:'La tua valutazione'};
+const titles = {home:'Il valore reale in un click', metodo:'Metodo', zone:'Zone servite', contatti:'Contatti', valutazione:'Valuta il tuo immobile', ordine:'Riepilogo e pagamento'};
 let zones = [], comuni = [], zonesByCity = new Map(), allZonesLoaded = false, listino = null, comuniPending;
-let questions = [], answers = {}, step = 0, wizard = false, result, checking = false;
+let questions = [], answers = {}, step = 0, wizard = false, quote = null, orderInputs = null, price = 49, checking = false;
 let place = {comune:'', zona:'', destinazione:''};
 let recapiti = {name:'', email:''};
 let renderId = 0;
@@ -91,7 +91,7 @@ function go(name) {
 }
 function focusPage(){document.querySelector('#main').focus({preventScroll:true});window.scrollTo(0,0)}
 function resetEstimate(city=''){
-  place={comune:city,zona:'',destinazione:''}; recapiti={name:'',email:''}; answers={}; wizard=false; step=0; result=null; checking=false;
+  place={comune:city,zona:'',destinazione:''}; recapiti={name:'',email:''}; answers={}; wizard=false; step=0; quote=null; orderInputs=null; checking=false;
 }
 function startExcelExample(){
   resetEstimate(EXAMPLE_PLACE.comune);
@@ -114,7 +114,7 @@ function updateMenu(open) {
 menu.addEventListener('click',()=>updateMenu(menu.getAttribute('aria-expanded')!=='true'));
 document.addEventListener('keydown',e=>{if(e.key==='Escape' && menu.getAttribute('aria-expanded')==='true'){updateMenu(false);menu.focus()}});
 document.querySelector('.skip').addEventListener('click',e=>{e.preventDefault();document.querySelector('#main').focus()});
-document.querySelector('.nav-start').addEventListener('click',()=>{if(route()==='risultato')resetEstimate()});
+document.querySelector('.nav-start').addEventListener('click',()=>{if(route()==='ordine')resetEstimate()});
 function contactForm(manual=false) {
   return '<form id="contact-form" class="panel"><h2>'+(manual?'Richiedi una valutazione manuale':'Scrivici')+'</h2><p class="muted">'+(manual?'Indica dove si trova l’immobile e come possiamo ricontattarti.':'Lascia i tuoi recapiti e descrivi la tua richiesta.')+'</p><div class="form-grid">'+
     (manual?field('c-city','Comune','<input id="c-city" class="input" name="comune" required maxlength="120" value="'+esc(place.comune)+'">')+field('c-zone','Zona o quartiere','<input id="c-zone" class="input" name="zona" maxlength="120" value="'+esc(place.zona)+'">')+field('c-use','Destinazione d’uso','<input id="c-use" class="input" name="destinazione" maxlength="120" value="'+esc(place.destinazione)+'" placeholder="Es. abitazione, ufficio">',true):'')+
@@ -222,6 +222,7 @@ function mountAddressSearch(container){
             const local = await zonesFor(candidate.comune);
             if (current !== revision) return;
             resetEstimate(local[0]?.comune || candidate.comune);
+            place.address = candidate.label;
             zones = allZonesLoaded ? zones : local;
             const matches = distinct(local.map(row => row.zona).filter(zone => candidate.districts.some(d => sameZone(d, zone))));
             if (matches.length === 1) place.zona = matches[0];
@@ -279,7 +280,7 @@ function locationPage(){
       if(!found.length || (place.zona && place.destinazione && !ready) || !place.zona || !place.destinazione){
         locationPage();focusPage();return;
       }
-      if(!questions.length){const data=await request('/api/questions');if(!data.questions?.length)throw Error('Il questionario non è disponibile.');questions=data.questions}
+      if(!questions.length){const data=await request('/api/questions');if(!data.questions?.length)throw Error('Il questionario non è disponibile.');questions=data.questions;price=data.price||price}
       if(id!==renderId)return;wizard=true;step=0;questionPage();focusPage();
     }catch(err){if(id===renderId)document.querySelector('#locate .error').textContent=err.message;submit.disabled=false}
   });
@@ -288,7 +289,7 @@ function visible(q){return !q.when || q.when.values.some(v=>same(v,answers[q.whe
 function questionPage(){
   const groups=[...new Set(questions.map(q=>q.group))].filter(g=>questions.some(q=>q.group===g&&visible(q)));
   step=Math.min(step,groups.length-1);const group=groups[step];
-  page.innerHTML=caption('Valutazione immobiliare')+'<h1>'+esc(group)+'</h1><p class="muted">'+esc([place.comune,place.zona,place.destinazione].join(' · '))+'</p><form id="question-form" class="panel"><div class="progress-wrap"><p>Passaggio '+(step+1)+' di '+groups.length+'</p><progress max="'+groups.length+'" value="'+(step+1)+'" aria-label="Avanzamento del questionario"></progress></div><div class="form-grid" id="question-fields"></div>'+errorBox()+'<div class="form-actions"><button type="button" class="btn secondary" id="back">Indietro</button><button type="submit" class="btn">'+(step===groups.length-1?'Calcola la stima':'Continua')+'</button></div></form>';
+  page.innerHTML=caption('Valutazione immobiliare')+'<h1>'+esc(group)+'</h1><p class="muted">'+esc([place.comune,place.zona,place.destinazione].join(' · '))+'</p><form id="question-form" class="panel"><div class="progress-wrap"><p>Passaggio '+(step+1)+' di '+groups.length+'</p><progress max="'+groups.length+'" value="'+(step+1)+'" aria-label="Avanzamento del questionario"></progress></div><div class="form-grid" id="question-fields"></div>'+errorBox()+'<div class="form-actions"><button type="button" class="btn secondary" id="back">Indietro</button><button type="submit" class="btn">'+(step===groups.length-1?'Vai al riepilogo':'Continua')+'</button></div></form>';
   const form=document.querySelector('#question-form'),container=document.querySelector('#question-fields');
   for(const q of questions.filter(q=>q.group===group)){
     const id='q-'+q.id,value=answers[q.id]??'';
@@ -316,54 +317,55 @@ function questionPage(){
       }
     }));
   }
-  if(step===groups.length-1){
-    container.insertAdjacentHTML('beforeend',field('q-name','Nome (facoltativo)','<input id="q-name" class="input" autocomplete="name" maxlength="120" value="'+esc(recapiti.name)+'">')+
-      field('q-mail','Email (facoltativo)','<input id="q-mail" class="input" type="email" autocomplete="email" maxlength="254" value="'+esc(recapiti.email)+'">'));
-    container.insertAdjacentHTML('beforeend','<p class="muted small full">Se lasci l’email, ti scriviamo per confermare che abbiamo ricevuto i recapiti e ti ricontatteremo.</p>');
-  }
   document.querySelector('#back').addEventListener('click',()=>{
-    recapiti.name=form.querySelector('#q-name')?.value.trim()||recapiti.name;
-    recapiti.email=form.querySelector('#q-mail')?.value.trim()||recapiti.email;
     if(step){step--;questionPage()}else{wizard=false;locationPage()}focusPage()
   });
   form.addEventListener('submit',async e=>{
     e.preventDefault();
-    recapiti.name=form.querySelector('#q-name')?.value.trim()||recapiti.name;
-    recapiti.email=form.querySelector('#q-mail')?.value.trim()||recapiti.email;
     if(step<groups.length-1){step++;questionPage();focusPage();return}
     const id=renderId,status=form.querySelector('.error'),buttons=form.querySelectorAll('button');
     status.textContent='';buttons.forEach(b=>b.disabled=true);
     const inputs=Object.fromEntries(questions.filter(q=>visible(q)&&answers[q.id]!==undefined&&answers[q.id]!=='').map(q=>[q.id,answers[q.id]]));
-    try{const next=await request('/api/estimate',{...place,inputs,name:recapiti.name,email:recapiti.email});if(id===renderId){result=next;go('risultato')}}
+    try{const next=await request('/api/quote',{...place,inputs});if(id===renderId){quote=next;orderInputs=inputs;go('ordine')}}
     catch(err){status.textContent=err.message}finally{buttons.forEach(b=>b.disabled=false)}
   });
 }
-function resultPage(){
-  if(!result){page.innerHTML='<h1>La tua valutazione</h1><p>Inizia dal comune per calcolare una stima.</p><a class="btn" href="#valutazione">Inizia la stima</a>';return}
-  const warnings=result.warnings||[];
-  page.innerHTML=caption('Esito della valutazione')+'<h1>'+esc(warnings.length?'La tua stima parziale':'Il valore del tuo immobile')+'</h1><p class="page-description">'+esc([place.comune,place.zona,place.destinazione].join(' · '))+'</p><article class="panel"><p class="field-label">'+(warnings.length?'Valore stimato parziale':'Valore stimato')+'</p><p class="result-value">'+money.format(result.value)+'</p>'+
-    (warnings.length?'<div class="notice"><strong>Limiti della stima</strong><ul>'+warnings.map(w=>'<li>'+esc(w)+'</li>').join('')+'</ul></div>':'')+
-    '<dl class="metrics"><div><dt>Minimo indicativo</dt><dd>'+money.format(result.minimum)+'</dd></div><div><dt>Prezzo al m²</dt><dd>'+money.format(result.rate)+'</dd></div><div><dt>Superficie commerciale</dt><dd>'+number.format(result.surface)+' m²</dd></div>'+(result.fonte?'<div><dt>Fonte</dt><dd>'+esc(result.fonte)+'</dd></div>':'')+(result.data_riferimento?'<div><dt>Data listino</dt><dd>'+esc(result.data_riferimento)+'</dd></div>':'')+'</dl>'+
-    '<h3>Fattori con maggiore incidenza</h3>'+(result.factors?.length?'<ul class="factor-list">'+[...result.factors].sort((a,b)=>Math.abs(b.value)-Math.abs(a.value)).slice(0,5).map(f=>'<li><span>'+esc(f.label)+'</span><strong>'+(f.value>0?'+':'')+number.format(f.value)+'%</strong></li>').join('')+'</ul>':'<p class="muted">Nessun correttivo rilevato.</p>')+
-    '<div class="form-actions"><a id="pdf" class="btn">'+icon('download')+'Scarica il PDF</a>'+(result.contactReceived||recapiti.email?'':'<a class="btn secondary" href="#contatti">Richiedi un contatto</a>')+'</div></article>'+
-    (result.contactReceived||recapiti.email
-      ? '<p class="notice">Ti abbiamo inviato una conferma'+(recapiti.email?' a '+esc(recapiti.email):'')+'. Ti ricontatteremo.</p>'
-      : '<form id="result-contact" class="panel"><h2>Vuoi essere ricontattato?</h2><p class="muted">Lascia nome ed email: ti scriviamo per confermare che abbiamo ricevuto i recapiti.</p><div class="form-grid">'+
-        field('r-name','Nome','<input id="r-name" class="input" name="name" autocomplete="name" required maxlength="120">')+
-        field('r-mail','Email','<input id="r-mail" class="input" type="email" name="email" autocomplete="email" required maxlength="254">')+
-        '</div>'+errorBox()+'<div class="form-actions"><button class="btn" type="submit">Invia recapiti</button></div></form>')+
-    '<button id="new-estimate" class="btn secondary">Valuta un altro immobile</button>';
-  const pdf=document.querySelector('#pdf');pdf.href=publicUrl(result.pdfUrl);pdf.rel='noopener';pdf.target='_blank';
-  document.querySelector('#new-estimate').addEventListener('click',()=>{resetEstimate();go('valutazione')});
-  const follow=document.querySelector('#result-contact');
-  follow?.addEventListener('submit',async e=>{
-    e.preventDefault();const btn=follow.querySelector('button');btn.disabled=true;
-    const data=Object.fromEntries(new FormData(follow));
+function answerRows(){
+  return questions.filter(q=>visible(q)&&orderInputs?.[q.id]!==undefined).map(q=>'<div><dt>'+esc(q.label)+'</dt><dd>'+esc(orderInputs[q.id])+(q.id==='surface'?' m²':'')+'</dd></div>').join('');
+}
+function orderPage(){
+  if(!quote||!orderInputs){page.innerHTML='<h1>Riepilogo</h1><p>Inizia dal comune per preparare la valutazione.</p><a class="btn" href="#valutazione">Inizia la valutazione</a>';return}
+  const session=getSession(),warnings=quote.warnings||[];
+  page.innerHTML=caption('Riepilogo e pagamento')+'<h1>La tua valutazione è pronta</h1><p class="page-description">'+esc([place.address,[quote.comune,quote.zona,quote.destinazione].join(' · ')].filter(Boolean).join(' — '))+'</p>'+
+    '<article class="panel"><details><summary><strong>Dati dichiarati</strong> ('+Object.keys(orderInputs).length+' risposte)</summary><dl class="metrics">'+answerRows()+'</dl></details>'+
+    (warnings.length?'<div class="notice"><strong>Stima parziale</strong><p>Alcuni dati non hanno un coefficiente nel modello: la relazione lo indicherà.</p><ul>'+warnings.map(w=>'<li>'+esc(w)+'</li>').join('')+'</ul></div>':'')+
+    '<button type="button" class="btn secondary" id="edit">Modifica le risposte</button></article>'+
+    '<article class="panel"><h2>Valutazione con relazione PDF</h2><p class="result-value">'+money.format(price)+'</p><p class="muted">Valore stimato, minimo indicativo, quotazione di zona, correttivi e relazione PDF scaricabile dalla tua area personale.</p></article>'+
+    '<form id="checkout" class="panel"><h2>'+(session?'Account':'Accedi o crea un account')+'</h2>'+
+    (session?'<p class="muted">Accesso come <strong>'+esc(session.email||'utente')+'</strong> · <button type="button" class="text-link" id="switch-user">Cambia account</button></p>'
+      :'<div class="choice-row" role="radiogroup" aria-label="Accesso"><label class="choice"><input type="radio" name="mode" value="signup" checked> Nuovo cliente</label><label class="choice"><input type="radio" name="mode" value="login"> Ho già un account</label></div><div class="form-grid">'+
+        field('o-mail','Email','<input id="o-mail" class="input" name="email" type="email" required maxlength="254" autocomplete="email">')+
+        field('o-pass','Password (almeno 8 caratteri)','<input id="o-pass" class="input" name="password" type="password" required minlength="8" autocomplete="new-password">')+'</div>')+
+    // TODO legale: testo definitivo di termini di vendita e rinuncia al recesso da far validare.
+    '<label class="choice"><input type="checkbox" name="consent" required> Chiedo la consegna immediata della valutazione e prendo atto che, una volta resa disponibile, perdo il diritto di recesso.</label>'+
+    errorBox()+'<div class="form-actions"><button class="btn" type="submit">Paga '+money.format(price)+'</button></div></form>';
+  document.querySelector('#edit').addEventListener('click',()=>{wizard=true;step=0;go('valutazione')});
+  document.querySelector('#switch-user')?.addEventListener('click',()=>{clearSession();orderPage()});
+  const form=document.querySelector('#checkout');
+  form.querySelectorAll('[name=mode]').forEach(r=>r.addEventListener('change',()=>{form.querySelector('#o-pass').autocomplete=r.value==='login'?'current-password':'new-password'}));
+  form.addEventListener('submit',async e=>{
+    e.preventDefault();
+    const btn=form.querySelector('[type=submit]'),status=form.querySelector('.error'),data=Object.fromEntries(new FormData(form));
+    status.textContent='';btn.disabled=true;
     try{
-      const summary='Stima indicativa '+money.format(result.value)+' (minimo '+money.format(result.minimum)+'), superficie '+number.format(result.surface)+' m².';
-      await request('/api/contact',{kind:'estimate',...place,...data,message:summary});
-      recapiti={name:data.name,email:data.email};result.contactReceived=true;resultPage();
-    }catch(err){follow.querySelector('.error').textContent=err.message;btn.disabled=false}
+      if(!getSession()){
+        const auth=await apiJson('/api/account/'+(data.mode==='login'?'login':'signup'),{email:data.email,password:data.password});
+        if(auth.confirm){status.textContent='Ti abbiamo inviato una email di conferma: apri il link, poi torna qui e scegli «Ho già un account».';btn.disabled=false;return}
+        setSession(auth);
+      }
+      const {checkoutUrl}=await apiJson('/api/orders',{...place,inputs:orderInputs,consent:true},{auth:true});
+      location.href=checkoutUrl||'/account/';
+    }catch(err){status.textContent=err.message;btn.disabled=false;if(err.status===401)orderPage()}
   });
 }
 async function render(){
@@ -376,8 +378,7 @@ async function render(){
     mountAddressSearch(document.querySelector('#home-search'));
     const example=document.querySelector('#home-example');
     if(example){
-      example.innerHTML='<p>Zona già coperta dal listino: <strong>Brescia · Centro storico · Direzionale</strong>, 65 m² (esempio Excel). Piano rialzato e anno 1900 sono i valori con coefficiente nel modello.</p><button type="button" class="btn secondary" id="try-brescia">Inizia con l’esempio di Brescia</button>';
-      example.querySelector('#try-brescia').addEventListener('click', startExcelExample);
+      example.innerHTML='<p>Valutazione completa con relazione PDF a <strong>'+money.format(price)+'</strong>. Paghi dopo il riepilogo, solo se la zona è coperta.</p><a class="btn secondary" href="/assets/esempio-relazione.pdf" target="_blank" rel="noopener">Guarda un esempio di relazione</a>';
     }
     loadZones().catch(()=>{});
     return
@@ -385,7 +386,7 @@ async function render(){
   if(current==='metodo'){methodPage();return}
   if(current==='indirizzo'||(current==='valutazione'&&!place.comune&&!wizard)){addressPage();return}
   if(current==='contatti'){page.innerHTML=caption('Contatti')+'<h1>Come possiamo aiutarti?</h1>'+contactForm();bindContact();return}
-  if(current==='risultato'){resultPage();return}
+  if(current==='ordine'){orderPage();return}
   page.innerHTML='<p role="status">Verifica delle quotazioni in corso…</p>';
   try{
     await loadZones();if(id!==renderId)return;

@@ -47,3 +47,17 @@ La migrazione versionata in `supabase/migrations` è già applicata al progetto 
 Quando un visitatore lascia un’email (contatto, copertura o stima), la funzione invia un ringraziamento con Resend. La chiave si legge, in quest’ordine, dal Vault `stimaimmobile_resend` tramite `stimaimmobile.resend_api_key()` e, se assente, dalla variabile d’ambiente della funzione `RESEND_API_KEY`. In un progetto Supabase condiviso non sostituire il segreto Edge Function `RESEND_API_KEY` delle altre applicazioni: aggiornare solo il Vault di StimaImmobile. Il valore non va nel repository, nel client o nelle Pages. Mittente: `StimaImmobile.it <noreply@sonyc.it>` (dominio Resend verificato). Se la chiave manca, la richiesta viene comunque salvata.
 
 Per verificare il servizio, la richiesta `GET /functions/v1/stimaimmobile-api/zones` restituisce i comuni coperti. `GET /zones?comune=Brescia` elenca zona e destinazione. Un elenco vuoto è previsto fino al primo listino. `GET /functions/v1/stimaimmobile-api/admin/contacts` richiede l’accesso amministrativo. Stato e note delle richieste si aggiornano con `POST /functions/v1/stimaimmobile-api/admin/contact`.
+
+## Valutazioni a pagamento e area cliente
+
+Ogni valutazione è un ordine (`stimaimmobile.orders`, migrazione `20261128120000_stimaimmobile_orders.sql`) di 49 € (`PRICE_CENTS` in `functions/stimaimmobile-api/payments.mjs`). Il questionario restituisce solo un riepilogo (`POST /quote`, senza importi). `POST /orders` richiede un utente Supabase Auth, salva la stima come `pending` e apre Stripe Checkout. Valore e PDF escono solo da `GET /me/orders` e `GET /me/orders/:id/pdf`, per il proprietario e con stato `paid`. `POST /estimate` risponde 410; `/pdf/<token>` resta valido per le relazioni emesse prima.
+
+Account cliente: `POST /account/signup`, `/account/login`, `/account/recover`, `/account/password`; pagina `/account/`. Nel progetto Supabase aggiungere `https://<dominio>/account/` agli URL di redirect consentiti (conferma email e recupero password). Se la conferma email è attiva, la registrazione chiede di confermare e poi accedere. Il dominio pubblico si imposta con la variabile `STIMAIMMOBILE_SITE_URL` della funzione (predefinito `https://stimaimmobile-it.pages.dev`).
+
+### Attivare Stripe
+
+1. Nel Vault del progetto creare `stimaimmobile_stripe_secret` (chiave `sk_test_…`, poi `sk_live_…`).
+2. In Stripe creare un endpoint webhook verso `https://dukuozoqinycdetxqsvr.supabase.co/functions/v1/stimaimmobile-api/stripe/webhook` con gli eventi `checkout.session.completed` e `checkout.session.async_payment_succeeded`; salvare il suo segreto `whsec_…` nel Vault come `stimaimmobile_stripe_webhook`.
+3. Senza la chiave Stripe gli ordini restano «In attesa»: dall’area riservata, pannello **Ordini**, un operatore può segnarli come pagati (es. bonifico). Segnare «Pagato» sblocca la valutazione al cliente e invia la mail.
+
+Termini di vendita, testo sul recesso e fatturazione sono ancora da definire (vedi `TODO legale` in `app.js`).
